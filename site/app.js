@@ -310,7 +310,7 @@
       serverStickers = map;
       stickersShared = true;
       const mine = map[norm(state.session.name)] || new Set();
-      for (const id of store.get("stickers", [])) {
+      for (const id of [...store.get("stickers", []), ...earnedFromRatings(state.session.name)]) {
         if (!mine.has(id) && STICKERS.some((st) => st.id === id)) {
           mine.add(id);
           rpc("dr_award", { p_token: state.session.token, p_sticker: id }).catch(() => {});
@@ -319,10 +319,29 @@
       map[norm(state.session.name)] = mine;
     } catch { /* stickers.sql not run yet: own stickers still show from this phone */ }
   }
+  // Stickers that follow from the ratings themselves, so they show for
+  // everyone no matter which phone the person used.
+  function earnedFromRatings(name) {
+    const out = [];
+    const mine = personRatings(name);
+    if (mine.some((r) => r.score === 10)) out.push("perfect");
+    if (mine.some((r) => r.score === 1)) out.push("yuck");
+    const { byDrink } = derived();
+    if (mine.some((r) => (byDrink[r.drink] || []).some((o) => norm(o.name) !== norm(name) && o.score === r.score))) out.push("agree");
+    return out;
+  }
   function stickersOf(name) {
     const set = new Set(serverStickers[norm(name)] || []);
+    for (const id of earnedFromRatings(name)) set.add(id);
     if (isMe(name)) for (const id of store.get("stickers", [])) set.add(id);
     return STICKERS.filter((st) => set.has(st.id)).map((st) => st.id);
+  }
+  // Fresh stickers when looking at the family, without reloading everything.
+  let stickersAt = 0;
+  function freshStickers() {
+    if (Date.now() - stickersAt < 8000) return;
+    stickersAt = Date.now();
+    loadStickers().then(() => { if (state.tab === "family" || String(state.sheet).startsWith("person:")) render(); });
   }
 
   async function refresh() {
@@ -1259,12 +1278,13 @@
       drawLogin();
       return;
     }
+    if (ds.tab === "family") freshStickers();
     if (ds.tab) { state.tab = ds.tab; state.sheet = null; document.body.style.overflow = ""; render(); window.scrollTo(0, 0); return; }
     if (ds.bar) { state.bar = ds.bar; render(); return; }
     if (ds.cat) { state.cat = ds.cat; render(); return; }
     if (ds.topcat) { state.topCat = ds.topcat; render(); return; }
     if (ds.drink) { openDrink(ds.drink); return; }
-    if (ds.person) { openSheet("person:" + ds.person); return; }
+    if (ds.person) { openSheet("person:" + ds.person); freshStickers(); return; }
     if (ds.photo) {
       const thumb = (recentPhotos || []).find((p) => p.drink === ds.photo && norm(p.name) === norm(ds.who))?.thumb;
       openLightbox(ds.photo, ds.who, thumb);

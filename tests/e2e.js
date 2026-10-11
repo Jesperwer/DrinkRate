@@ -209,6 +209,8 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await b.getByText("Alle karakterer").waitFor();
   // Jesper's stickers are visible to Astri
   await b.locator(".sheet .stickers .sticker.s-miranda").waitFor();
+  // "Enige" follows from the ratings: Jesper never saw the egg on his phone, but Astri matched his 7
+  await b.locator(".sheet .stickers .sticker.s-agree").waitFor();
   assert.ok((await b.locator(".sheet .stickers .sticker:not(.locked)").count()) >= 4, "Jesper's stickers shown");
   assert.ok((await b.locator(".sheet .drink").count()) >= 3);
   await b.screenshot({ path: `${OUT}/8-person-dark.png` });
