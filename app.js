@@ -47,6 +47,11 @@
     if (d.cat === "beer") return "🍺";
     if (d.cat === "wine") return /champagne|prosecco|sparkling|perignon|ruinart|drappier/.test(n) ? "🍾" : /rose/.test(n) ? "🌸" : /^white|xynisteri|pinot grigio|chablis|sancerre|soave|lugana|chardonnay|sauvignon blanc/.test(norm(d.desc + " " + d.name)) ? "🥂" : "🍷";
     if (d.cat === "spirit") return /liqueur|cream|amaretto|limoncello/.test(n) ? "🍶" : "🥃";
+    if (/^strawberry/.test(n)) return "🍓";
+    if (/^mango/.test(n)) return "🥭";
+    if (/^passion fruit/.test(n)) return "🌺";
+    if (/^chocolate milkshake/.test(n)) return "🍫";
+    if (/^peach/.test(n)) return "🍑";
     if (d.cat === "free") {
       if (/smoothie|acai/.test(n)) return "🥤";
       if (/milkshake/.test(n)) return "🥛";
@@ -75,11 +80,12 @@
     list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14l-7 8z"/><path d="M12 12v7M8 20h8"/></svg>',
     top: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
     family: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.2a5 5 0 0 1 6 4.8"/></svg>',
+    swipe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c4 0 7-2.7 7-7 0-3-2-5.5-3.5-7-.3 2-1.3 3.3-2.5 4 .3-3.5-1.5-7-4.5-9 .3 3-1.2 5.3-2.8 7C4.4 11.4 5 13 5 15c0 4.3 3 7 7 7z"/></svg>',
     me: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
     search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
     close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   };
-  const TABS = [["list", "Drinker"], ["top", "Toppliste"], ["family", "Familien"], ["me", "Meg"]];
+  const TABS = [["list", "Drinker"], ["swipe", "Swipe"], ["top", "Toppliste"], ["family", "Familien"], ["me", "Meg"]];
 
   function ago(iso) {
     const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -123,6 +129,42 @@
   }
   const vibrate = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch { /* not supported */ } };
 
+  // Per-person memory on this phone: wish list, skipped swipes and found stickers.
+  const store = {
+    key: (k) => `drinkrate.${norm(state.session?.name)}.${k}`,
+    get(k, def) { try { return JSON.parse(localStorage.getItem(this.key(k))) ?? def; } catch { return def; } },
+    set(k, v) { try { localStorage.setItem(this.key(k), JSON.stringify(v)); } catch { /* private mode */ } },
+  };
+
+  const STICKERS = [
+    { id: "miranda", e: "👑", name: "Miranda" },
+    { id: "six7", e: "🫴", name: "6-7" },
+    { id: "perfect", e: "💯", name: "Perfekt 10" },
+    { id: "yuck", e: "🤢", name: "Uff" },
+    { id: "agree", e: "🙌", name: "Enige" },
+    { id: "match", e: "💘", name: "Match" },
+    { id: "cheers", e: "🥂", name: "Skål" },
+    { id: "opa", e: "🍽️", name: "Opa!" },
+    { id: "disco", e: "🪩", name: "Disco" },
+    { id: "owl", e: "🦉", name: "Natteravn" },
+  ];
+  function award(id, quiet) {
+    if (!state.session) return;
+    const have = store.get("stickers", []);
+    if (have.includes(id)) return;
+    store.set("stickers", [...have, id]);
+    if (quiet) return;
+    const st = STICKERS.find((x) => x.id === id);
+    setTimeout(() => {
+      document.querySelector(".sticker-pop")?.remove();
+      const el = document.createElement("div");
+      el.className = "sticker-pop";
+      el.innerHTML = `<span class="sticker s-${st.id}"><span>${st.e}</span><b>${esc(st.name)}</b></span><small>Nytt klistremerke!</small>`;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 2800);
+    }, document.querySelector(".fx") ? 2200 : 0);
+  }
+
   const EGGS = {
     sixSeven() {
       showFx("six7", `<div class="fx-burst">${rain(["🟥", "🟨", "🟦", "🟩", "🟪"], 30)}</div>
@@ -152,13 +194,37 @@
         <div class="fx-text big">OPA!</div><div class="fx-sub">Knus en tallerken for meg</div>`, 2600);
       vibrate([80, 40, 80]);
     },
+    miranda() {
+      showFx("miranda-fx", `<div class="fx-burst">${rain(["✨", "💖", "⭐", "💅"], 28)}</div>
+        <div class="mega-sticker"><span class="holo"></span><span class="ms-e">👑</span><b>MIRANDA</b><small>Limited edition</small></div>`, 3400);
+      vibrate([30, 30, 30, 30, 120]);
+    },
+    agree(names) {
+      showFx("agree-fx", `<div class="fx-burst">${rain(["🙌", "✨", "🤝"], 20)}</div>
+        <div class="fx-big">🙌</div><div class="fx-text">ENIGE!</div><div class="fx-sub">Samme karakter som ${esc(names.join(" og "))}</div>`, 2400);
+      vibrate([40, 60, 40]);
+    },
+    match(d, s) {
+      showFx("match-fx", `<div class="fx-burst">${rain(["💘", "💖", "✨", "💕"], 30)}</div>
+        <div class="fx-text match-title">It's a match!</div>
+        <div class="match-pair"><span class="mp">${avatar(state.session.name, "xl")}</span><span class="mp mp-d">${drinkEmoji(d)}</span></div>
+        <div class="fx-sub">${esc(d.name)} · familien gir den ${fmt(s.avg)}</div>`, 3000);
+      vibrate([60, 40, 60]);
+    },
     disco() {
       document.body.classList.add("disco");
       showFx("disco-fx", `<div class="fx-burst">${rain(["🪩", "💃", "🕺", "✨", "🎶"], 30)}</div><div class="fx-text">DISCO!</div>`, 2400);
       setTimeout(() => document.body.classList.remove("disco"), 9000);
     },
   };
+  // Every egg also hands out its sticker.
+  const STICKER_FOR = { sixSeven: "six7", perfect: "perfect", yuck: "yuck", cheers: "cheers", opa: "opa", disco: "disco", miranda: "miranda", agree: "agree", match: "match" };
+  for (const k of Object.keys(EGGS)) {
+    const f = EGGS[k];
+    EGGS[k] = (...a) => { f(...a); award(STICKER_FOR[k], k === "miranda"); };
+  }
   const SEARCH_EGGS = [
+    [/\bmiranda\b/, "miranda"],
     [/6\s*-?\s*7/, "sixSeven"],
     [/\b(skal|skaal|cheers|yamas|prost|salud)\b/, "cheers"],
     [/\b(opa|ouzo)\b/, "opa"],
@@ -370,6 +436,7 @@
 
   // ── Main app ───────────────────────────────────────────────
   function startApp() {
+    if (new Date().getHours() < 5) award("owl");
     state.loaded = false;
     render();
     refresh();
@@ -382,6 +449,7 @@
     let content;
     if (!state.loaded) content = `<div class="loading"><span class="spin">🍹</span>Henter vurderinger …</div>`;
     else if (state.tab === "list") content = viewList();
+    else if (state.tab === "swipe") content = viewSwipe();
     else if (state.tab === "top") content = viewTop();
     else if (state.tab === "family") content = viewFamily();
     else content = viewMe();
@@ -626,7 +694,10 @@
   }
 
   function viewMe() {
-    return `<div class="me-head">${avatar(state.session.name, "xl")}<div><h2>${esc(state.session.name)}</h2><p class="hint">Dine karakterer</p></div></div>
+    return `<div class="me-head">${avatar(state.session.name, "xl")}<div><h2>${esc(state.session.name)}</h2><p class="hint">Din side</p></div></div>
+      ${stickerBook()}
+      ${wishSection()}
+      <div class="section-title"><h2>Dine karakterer</h2></div>
       ${personBody(state.session.name)}
       <div class="me-actions">
         <p class="hint">Tips: I nettleseren, trykk Del → «Legg til på Hjem-skjerm», så åpner DrinkRate som en app.</p>
@@ -701,7 +772,7 @@
       <div class="sheet-head">
         <div class="sheet-title"><span class="emoji big cat-${d.cat}">${drinkEmoji(d)}</span>
           <div><h2>${esc(d.name)}</h2><div class="where">${esc(barNames(d.bars))}</div></div></div>
-        ${closeBtn}
+        <div class="head-btns"><button class="round-btn wish-btn ${wished(d.id) ? "on" : ""}" data-act="wish" aria-label="Vil smake">${wished(d.id) ? "♥" : "♡"}</button>${closeBtn}</div>
       </div>
       ${d.desc ? `<p class="desc">${esc(d.desc)}</p>` : ""}
       ${d.flav ? `<p class="flav">Smaker: ${esc(d.flav)}</p>` : ""}
@@ -754,8 +825,10 @@
       if (!remove) state.ratings = [{ drink: id, name: state.session.name, score, bar, comment: comment || null, at: new Date().toISOString() }, ...state.ratings];
       closeSheet();
       toast(remove ? "Vurdering fjernet" : `Lagret: ${score}/10 for ${d.name}`);
+      const twins = remove ? [] : (derived().byDrink[id] || []).filter((r) => !isMe(r.name) && r.score === score);
       if (score === 10) EGGS.perfect(d.name);
       else if (score === 1) EGGS.yuck();
+      else if (twins.length) EGGS.agree(twins.map((r) => r.name));
       refresh();
     } catch {
       state.saving = false; render(); toast(ERR.NETWORK);
@@ -780,6 +853,164 @@
     };
     spin();
   }
+
+  // ── Swipe ──────────────────────────────────────────────────
+  const swipeSeed = Math.random();
+  function jitter(id) {
+    let h = Math.floor(swipeSeed * 1e9);
+    for (const ch of id) h = (h * 33 + ch.charCodeAt(0)) >>> 0;
+    return (h % 1000) / 1000;
+  }
+  const wished = (id) => store.get("wish", []).includes(id);
+  function toggleWish(id) {
+    const w = store.get("wish", []);
+    store.set("wish", w.includes(id) ? w.filter((x) => x !== id) : [id, ...w]);
+    toast(w.includes(id) ? "Fjernet fra «Vil smake»" : "💚 Lagt til i «Vil smake»");
+  }
+
+  // Untasted drinks, best bets first: what the family loves, what is included,
+  // what matches your own taste, plus a little luck.
+  function deck() {
+    const { byDrink } = derived();
+    const wish = new Set(store.get("wish", []));
+    const skip = new Set(store.get("skip", []));
+    const cats = {};
+    for (const r of personRatings(state.session.name)) (cats[DRINK[r.drink].cat] ||= []).push(r.score);
+    // Your taste per category, trusted more the more you have rated in it.
+    const pref = (c) => (cats[c] ? ((cats[c].reduce((a, b) => a + b, 0) / cats[c].length) - 6) * Math.min(cats[c].length, 3) / 3 + 6 : 6);
+    return DRINKS
+      .filter((d) => !myRating(byDrink[d.id]) && !wish.has(d.id) && !skip.has(d.id) && (!state.aiOnly || d.ai.length))
+      .map((d) => {
+        const s = summary(byDrink[d.id]);
+        const score = (s ? s.avg * 1.2 + Math.min(s.n, 4) * 0.4 : 5.5) + (d.ai.length ? 2.5 : 0) +
+          (pref(d.cat) - 6) * 0.6 + (d.cat === "coffee" ? -2 : 0) + (d.cat === "spirit" && !d.ai.length ? -1.5 : 0) + jitter(d.id) * 3.5;
+        return { d, s, score };
+      })
+      .sort((a, b) => b.score - a.score);
+  }
+
+  function reasons(x) {
+    const out = [];
+    const list = derived().byDrink[x.d.id];
+    if (x.s && x.s.avg >= 8) out.push(`🔥 Familien gir den ${fmt(x.s.avg)}`);
+    else if (list && list.length) out.push(`${esc(list[0].name)} ga den ${list[0].score}`);
+    else out.push("🧭 Ingen har smakt den ennå");
+    out.push(x.d.ai.length ? `✦ Inkludert${x.d.ai.length < x.d.bars.length ? ` på ${esc(barNames(x.d.ai))}` : ""}` : `💶 ${esc(x.d.price || "Ikke inkludert")}`);
+    return out;
+  }
+
+  function viewSwipe() {
+    const all = deck();
+    const cards = all.slice(0, 3);
+    let html = `<div class="swipe-wrap">
+      <div class="swipe-bar">
+        <button class="chip toggle ${state.aiOnly ? "on" : ""}" data-act="aionly"><em>✦</em>Kun all inclusive</button>
+        <small>${all.length} igjen å sveipe</small>
+      </div>`;
+    if (!cards.length) {
+      html += `<div class="empty swipe-empty"><b>Du har sveipet gjennom alt! 🎉</b>Smak noe fra lista di, eller start på nytt.
+        <button class="btn" data-act="resetskip">Vis de jeg sa nei til igjen</button></div>`;
+    } else {
+      html += `<div class="deck">${cards.map((x, i) => `<div class="swipe-card ${i === 0 ? "is-top" : ""}" data-swipe="${x.d.id}" style="--i:${i}">
+          <span class="stamp like">VIL SMAKE</span><span class="stamp nope">NEI TAKK</span>
+          <div class="sc-top cat-${x.d.cat}"><span class="sc-emoji">${drinkEmoji(x.d)}</span><span class="sc-cat">${CAT[x.d.cat].e} ${CAT[x.d.cat].name}</span></div>
+          <div class="sc-body">
+            <h2>${esc(x.d.name)}</h2>
+            ${x.d.desc ? `<p>${esc(x.d.desc)}</p>` : ""}
+            <div class="sc-why">${reasons(x).map((r) => `<span>${r}</span>`).join("")}</div>
+            <div class="sc-bars">📍 ${esc(barNames(x.d.bars))}</div>
+          </div>
+        </div>`).reverse().join("")}</div>
+        <div class="swipe-actions">
+          <button class="sa undo" data-act="undo" aria-label="Angre" ${lastSwipe ? "" : "disabled"}>↩</button>
+          <button class="sa nope" data-act="nope" aria-label="Nei takk">✕</button>
+          <button class="sa now" data-act="tastenow" aria-label="Gi karakter nå">⭐</button>
+          <button class="sa like" data-act="like" aria-label="Vil smake">♥</button>
+        </div>
+        <p class="hint center">Sveip ➡️ for «vil smake», ⬅️ for «nei takk». Trykk på kortet for detaljer.</p>`;
+    }
+    return html + `</div>${wishSection()}`;
+  }
+
+  function wishSection() {
+    const { byDrink } = derived();
+    const list = store.get("wish", []).filter((id) => DRINK[id] && !myRating(byDrink[id]));
+    if (!list.length) return "";
+    return `<div class="section-title"><h2>💚 Vil smake</h2><small>${list.length}</small></div>
+      <div class="list">${list.map((id) => drinkRow(DRINK[id])).join("")}</div>`;
+  }
+
+  function stickerBook() {
+    const have = store.get("stickers", []);
+    return `<div class="section-title"><h2>Klistremerker</h2><small>${have.length} av ${STICKERS.length} funnet</small></div>
+      <div class="stickers">${STICKERS.map((st) => have.includes(st.id)
+        ? `<span class="sticker s-${st.id}" title="${esc(st.name)}"><span>${st.e}</span><b>${esc(st.name)}</b></span>`
+        : `<span class="sticker locked"><span>?</span><b>???</b></span>`).join("")}</div>`;
+  }
+
+  let lastSwipe = null;
+  function fling(card, dir) {
+    if (card.dataset.flung) return;
+    card.dataset.flung = "1";
+    const x = dir === "like" ? 1 : -1;
+    card.style.transition = "transform .32s ease-in, opacity .32s ease-in";
+    card.style.setProperty("--like", dir === "like" ? 1 : 0);
+    card.style.setProperty("--nope", dir === "nope" ? 1 : 0);
+    card.style.transform = `translate(${x * 130}vw, -40px) rotate(${x * 28}deg)`;
+    card.style.opacity = "0";
+    vibrate(15);
+    setTimeout(() => commitSwipe(card.dataset.swipe, dir), 260);
+  }
+  function commitSwipe(id, dir) {
+    const key = dir === "like" ? "wish" : "skip";
+    store.set(key, [id, ...store.get(key, []).filter((x) => x !== id)]);
+    lastSwipe = { id, key };
+    render();
+    if (dir === "like") {
+      const s = summary(derived().byDrink[id]);
+      if (s && s.avg >= 8) EGGS.match(DRINK[id], s);
+      else toast(`💚 ${DRINK[id].name} lagt til i «Vil smake»`);
+    }
+  }
+  function undoSwipe() {
+    if (!lastSwipe) return;
+    store.set(lastSwipe.key, store.get(lastSwipe.key, []).filter((x) => x !== lastSwipe.id));
+    lastSwipe = null;
+    render();
+  }
+
+  let drag = null;
+  root.addEventListener("pointerdown", (e) => {
+    const card = e.target.closest(".swipe-card.is-top");
+    if (!card || card.dataset.flung) return;
+    drag = { card, x: e.clientX, y: e.clientY, dx: 0, dy: 0, pid: e.pointerId };
+    try { card.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    card.classList.add("dragging");
+  });
+  root.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    drag.dx = e.clientX - drag.x;
+    drag.dy = e.clientY - drag.y;
+    const c = drag.card;
+    c.style.transform = `translate(${drag.dx}px, ${drag.dy * 0.25}px) rotate(${drag.dx / 14}deg)`;
+    c.style.setProperty("--like", Math.max(0, Math.min(1, drag.dx / 100)).toFixed(2));
+    c.style.setProperty("--nope", Math.max(0, Math.min(1, -drag.dx / 100)).toFixed(2));
+  });
+  const endDrag = (e) => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const d = drag;
+    drag = null;
+    d.card.classList.remove("dragging");
+    if (Math.abs(d.dx) > 90) fling(d.card, d.dx > 0 ? "like" : "nope");
+    else {
+      d.card.style.transform = "";
+      d.card.style.setProperty("--like", 0);
+      d.card.style.setProperty("--nope", 0);
+      if (e.type === "pointerup" && Math.abs(d.dx) < 6 && Math.abs(d.dy) < 6) openDrink(d.card.dataset.swipe);
+    }
+  };
+  root.addEventListener("pointerup", endDrag);
+  root.addEventListener("pointercancel", endDrag);
 
   // ── Events ─────────────────────────────────────────────────
   let lastTaps = []; // score taps, to catch a quick 6 → 7
@@ -819,6 +1050,11 @@
       case "remove": saveRating(true); break;
       case "refresh": closeSheet(); refresh(); toast("Oppdatert"); break;
       case "logout": logout(); break;
+      case "wish": toggleWish(state.sheet); render(); break;
+      case "like": case "nope": { const c = root.querySelector(".swipe-card.is-top"); if (c) fling(c, ds.act); break; }
+      case "tastenow": { const c = root.querySelector(".swipe-card.is-top"); if (c) openDrink(c.dataset.swipe); break; }
+      case "undo": undoSwipe(); break;
+      case "resetskip": store.set("skip", []); render(); break;
       case "aionly": state.aiOnly = !state.aiOnly; render(); break;
       case "surprise": surprise(); break;
       case "logo": {
