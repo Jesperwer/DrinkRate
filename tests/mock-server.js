@@ -13,7 +13,7 @@ const FNS = {
   dr_register: ["p_name", "p_pin"],
   dr_login: ["p_name", "p_pin"],
   dr_get_ratings: ["p_token"],
-  dr_rate: ["p_token", "p_drink", "p_stars", "p_comment"],
+  dr_rate: ["p_token", "p_drink", "p_score", "p_bar", "p_comment"],
 };
 const TYPES = { mime: { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json" } };
 
@@ -23,7 +23,7 @@ function callSql(fn, args, cb) {
   const call = params.map((p, i) => {
     const v = args[p];
     vars.push("-v", `a${i}=${v === null || v === undefined ? NULL : String(v)}`);
-    const cast = { p_token: "::uuid", p_stars: "::int" }[p] || "";
+    const cast = { p_token: "::uuid", p_score: "::int" }[p] || "";
     return `${p} => nullif(:'a${i}', '${NULL}')${cast}`;
   });
   const sql = `set role anon; select ${fn}(${call.join(", ")});`;

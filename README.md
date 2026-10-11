@@ -8,10 +8,12 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
   Legg prosjektets URL og publishable/anon-nøkkel i `site/config.js`.
 - **Drinkene:** `site/drinks.js`. Endre aldri `id` på en drink som allerede har vurderinger.
 
-## Brukere
+## Slik fungerer den
 
-Alle lager sin egen bruker med navn og 4-sifret PIN-kode. Etter 8 feil forsøk
-sperres brukeren i 5 minutter.
+- Familien står i `site/config.js` (`family`). Første gang man trykker på navnet sitt,
+  velger man selv en 4-sifret PIN-kode. Etter 8 feil forsøk sperres brukeren i 5 minutter.
+- Karakter 1–10 per drink. Drinkene er felles for alle barene. Hvor man smakte den er valgfritt.
+- Skriver man «67» i søk eller kommentar (eller trykker 6 og så 7), kommer 6-7-animasjonen.
 
 Nullstille en glemt PIN (Supabase → SQL Editor, bytt ut navn og PIN):
 

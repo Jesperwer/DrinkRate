@@ -3,4 +3,6 @@
 window.DR_CONFIG = {
   url: "",
   key: "",
+  // The people shown on the login screen. Each picks their own PIN the first time.
+  family: ["Luise", "Jesper", "Jakob", "Astri", "Ingvild", "Anne", "Julie"],
 };

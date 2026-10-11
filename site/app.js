@@ -2,6 +2,7 @@
   "use strict";
 
   const CFG = window.DR_CONFIG || {};
+  const FAMILY = CFG.family || [];
   const BARS = window.BARS;
   const DRINKS = window.DRINKS;
   const BAR = Object.fromEntries(BARS.map((b) => [b.id, b]));
@@ -12,7 +13,8 @@
     { id: "free", name: "Alkoholfritt" },
     { id: "beerwine", name: "Øl & vin" },
   ];
-  const STAR_WORDS = ["", "Nei takk", "Grei nok", "God", "Veldig god", "Perfekt!"];
+  const CAT_TITLE = { cocktail: "Cocktails", free: "Alkoholfritt", beerwine: "Øl & vin" };
+  const SCORE_WORDS = ["", "Uff", "Dårlig", "Svak", "Så som så", "Helt ok", "Grei", "God", "Veldig god", "Nydelig", "Perfekt!"];
   const AVATAR_COLORS = ["#e2553f", "#0d6b86", "#e39b21", "#5b8c5a", "#8a5cb8", "#c2577f", "#3d7fd1", "#a0703c"];
   const LS_KEY = "drinkrate.session";
 
@@ -24,13 +26,14 @@
   const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const initial = (name) => esc((name || "?").trim().charAt(0).toUpperCase());
   const colorFor = (name) => {
+    const i = FAMILY.findIndex((n) => norm(n) === norm(name));
+    if (i >= 0) return AVATAR_COLORS[i % AVATAR_COLORS.length];
     let h = 0;
     for (const ch of norm(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     return AVATAR_COLORS[h % AVATAR_COLORS.length];
   };
-  const fmt = (n) => n.toFixed(1).replace(".", ",");
-  const miniStars = (n) => "★".repeat(n) + `<i>${"★".repeat(5 - n)}</i>`;
-  const STAR_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.6l2.9 6 6.5.8-4.8 4.5 1.2 6.5L12 17.3l-5.8 3.1 1.2-6.5L2.6 9.4l6.5-.8z"/></svg>';
+  const fmt = (n) => (Math.round(n * 10) / 10).toFixed(1).replace(".", ",");
+  const barNames = (ids) => ids.map((id) => BAR[id].name).join(" · ");
   const ICONS = {
     list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14l-7 8z"/><path d="M12 12v7M8 20h8"/></svg>',
     top: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
@@ -47,12 +50,38 @@
     toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2600);
   }
 
+  // ── 6-7 ────────────────────────────────────────────────────
+  let sixSevenTimer;
+  function sixSeven() {
+    document.querySelector(".six7")?.remove();
+    const el = document.createElement("div");
+    el.className = "six7";
+    el.setAttribute("aria-hidden", "true");
+    const bits = Array.from({ length: 28 }, (_, i) => {
+      const x = (Math.random() * 2 - 1) * 46;
+      const y = -(20 + Math.random() * 60);
+      const r = Math.round(Math.random() * 720 - 360);
+      const c = AVATAR_COLORS[i % AVATAR_COLORS.length];
+      return `<i style="--x:${x.toFixed(1)}vw;--y:${y.toFixed(1)}vh;--r:${r}deg;background:${c};animation-delay:${(Math.random() * 0.25).toFixed(2)}s"></i>`;
+    }).join("");
+    el.innerHTML = `<div class="six7-burst">${bits}</div>
+      <div class="six7-nums"><b class="n6">6</b><b class="n7">7</b></div>
+      <div class="six7-hands"><span class="h1">🫴</span><span class="h2">🫴</span></div>
+      <div class="six7-text">SIX SEVEN!</div>`;
+    el.addEventListener("click", () => el.remove());
+    document.body.appendChild(el);
+    if (navigator.vibrate) navigator.vibrate([60, 80, 60, 80, 60]);
+    clearTimeout(sixSevenTimer);
+    sixSevenTimer = setTimeout(() => el.remove(), 3200);
+  }
+  const has67 = (s) => /6\s*-?\s*7/.test(s || "");
+
   // ── API ────────────────────────────────────────────────────
   const ERR = {
-    NAME_TAKEN: "Det navnet er allerede tatt. Velg det i lista over for å logge inn.",
-    BAD_NAME: "Skriv et navn (maks 24 tegn).",
+    BAD_NAME: "Ugyldig navn.",
     BAD_PIN: "Feil PIN-kode. Prøv igjen.",
-    NO_USER: "Fant ingen med det navnet.",
+    NO_USER: "Du har ikke valgt PIN-kode ennå. Velg en nå.",
+    NAME_TAKEN: "Du har allerede en PIN-kode. Logg inn med den.",
     LOCKED: "For mange forsøk. Vent 5 minutter og prøv igjen.",
     NETWORK: "Får ikke kontakt. Sjekk nettet og prøv igjen.",
   };
@@ -82,7 +111,7 @@
   const state = {
     session: loadSession(), // { token, name }
     users: [],
-    ratings: [], // { drink, name, stars, comment, at }
+    ratings: [], // { drink, name, score, bar, comment, at }
     loaded: false,
     tab: "list",
     bar: "all",
@@ -90,7 +119,7 @@
     q: "",
     topCat: "all",
     sheet: null, // drink id | "menu"
-    draft: null, // { stars, comment }
+    draft: null, // { score, bar, comment }
     saving: false,
   };
 
@@ -107,7 +136,7 @@
     try {
       const data = await rpc("dr_get_ratings", { p_token: state.session.token });
       if (data.error === "BAD_TOKEN") { logout(); return; }
-      state.ratings = data.ratings || [];
+      state.ratings = (data.ratings || []).filter((r) => DRINK[r.drink]);
       if (data.me && data.me !== state.session.name) saveSession({ ...state.session, name: data.me });
       const wasLoaded = state.loaded;
       state.loaded = true;
@@ -136,7 +165,7 @@
   }
   function summary(list) {
     if (!list || !list.length) return null;
-    return { avg: list.reduce((s, r) => s + r.stars, 0) / list.length, n: list.length };
+    return { avg: list.reduce((s, r) => s + r.score, 0) / list.length, n: list.length };
   }
   function myRating(list) {
     const me = norm(state.session?.name);
@@ -144,7 +173,8 @@
   }
 
   // ── Login screen ───────────────────────────────────────────
-  const login = { mode: "pick", name: "", error: "", busy: false };
+  const login = { mode: "pick", name: "", error: "", busy: false, ready: false };
+  const isRegistered = (name) => state.users.some((u) => norm(u) === norm(name));
 
   async function renderLogin() {
     if (!CFG.url || !CFG.key) {
@@ -152,10 +182,12 @@
         <p class="hint">Siden er ikke koblet til databasen ennå. Legg inn Supabase-adressen og nøkkelen i <b>config.js</b>.</p></div></div>`;
       return;
     }
+    login.ready = false;
     drawLogin();
     try {
       state.users = await rpc("dr_list_users", {});
-      if (!state.users.length && login.mode === "pick") login.mode = "new";
+      login.ready = true;
+      login.error = "";
     } catch {
       login.error = ERR.NETWORK;
     }
@@ -167,52 +199,56 @@
       <h1>DrinkRate</h1><p>Familiens drinkguide fra ferien</p></div>`;
   }
 
+  function pinField(name, label, autocomplete) {
+    return `<label class="field"><span>${label}</span>
+      <input class="input pin" name="${name}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="${autocomplete}" required></label>`;
+  }
+
   function drawLogin() {
     let body;
+    const names = FAMILY.length ? FAMILY : state.users;
     if (login.mode === "pick") {
       body = `<h2>Hvem er du?</h2>
         <div class="people">
-          ${state.users.map((n) => `<button class="person" data-pick="${esc(n)}">${esc(n)}</button>`).join("")}
-          <button class="person new" data-act="new">+ Ny person</button>
-        </div>`;
+          ${names.map((n) => `<button class="person" data-pick="${esc(n)}" ${login.ready ? "" : "disabled"}>
+            <span class="avatar sm" style="background:${colorFor(n)}">${initial(n)}</span>${esc(n)}</button>`).join("")}
+        </div>
+        <p class="error">${esc(login.error)}</p>
+        ${!login.ready && login.error ? `<button class="btn" data-act="retry">Prøv igjen</button>` : ""}`;
     } else if (login.mode === "pin") {
       body = `<h2>Hei, ${esc(login.name)}!</h2>
         <form data-form="login">
-          <label class="field"><span>Din PIN-kode</span>
-            <input class="input pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="current-password" required autofocus></label>
+          ${pinField("pin", "Din PIN-kode", "current-password")}
           <p class="error">${esc(login.error)}</p>
           <button class="btn" ${login.busy ? "disabled" : ""}>Logg inn</button>
         </form>
         <button class="link" data-act="back">Ikke deg? Velg et annet navn</button>`;
     } else {
-      body = `<h2>Lag din bruker</h2>
+      body = `<h2>Velkommen, ${esc(login.name)}!</h2>
+        <p class="hint" style="margin-top:0">Velg en PIN-kode på 4 tall. Du bruker den når du logger inn på en ny telefon.</p>
         <form data-form="register">
-          <label class="field"><span>Navn</span>
-            <input class="input" name="name" maxlength="24" autocomplete="nickname" required value="${esc(login.name)}" placeholder="F.eks. Mamma"></label>
-          <label class="field"><span>Velg en PIN-kode (4 tall)</span>
-            <input class="input pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="new-password" required></label>
-          <p class="hint">PIN-koden brukes når du logger inn på en ny telefon.</p>
+          ${pinField("pin", "Velg PIN-kode", "new-password")}
+          ${pinField("pin2", "Gjenta PIN-koden", "new-password")}
           <p class="error">${esc(login.error)}</p>
           <button class="btn coral" ${login.busy ? "disabled" : ""}>Kom i gang</button>
         </form>
-        ${state.users.length ? `<button class="link" data-act="back">Har allerede bruker</button>` : ""}`;
+        <button class="link" data-act="back">Ikke deg? Velg et annet navn</button>`;
     }
-    if (login.mode === "pick" && login.error) body += `<p class="error">${esc(login.error)}</p>`;
     root.innerHTML = `<div class="wrap login">${brand()}<div class="panel">${body}</div></div>`;
-    const pin = root.querySelector("input[name=pin]");
-    if (pin && login.mode === "pin") pin.focus();
+    root.querySelector("input[name=pin]")?.focus();
   }
 
   async function submitLogin(form, kind) {
     const pin = form.pin.value.trim();
-    const name = kind === "register" ? form.name.value.trim() : login.name;
-    if (kind === "register") login.name = name;
     if (!/^\d{4}$/.test(pin)) { login.error = "PIN-koden må være 4 tall."; drawLogin(); return; }
-    if (!name) { login.error = ERR.BAD_NAME; drawLogin(); return; }
+    if (kind === "register" && form.pin2.value.trim() !== pin) { login.error = "PIN-kodene er ikke like."; drawLogin(); return; }
     login.busy = true; login.error = ""; drawLogin();
     try {
-      const res = await rpc(kind === "register" ? "dr_register" : "dr_login", { p_name: name, p_pin: pin });
+      const res = await rpc(kind === "register" ? "dr_register" : "dr_login", { p_name: login.name, p_pin: pin });
       login.busy = false;
+      // Someone else set this person up meanwhile, or the list was stale.
+      if (res.error === "NAME_TAKEN") { state.users.push(login.name); login.mode = "pin"; }
+      if (res.error === "NO_USER") login.mode = "new";
       if (res.error) { login.error = ERR[res.error] || "Noe gikk galt. Prøv igjen."; drawLogin(); return; }
       saveSession({ token: res.token, name: res.name });
       Object.assign(login, { mode: "pick", name: "", error: "" });
@@ -275,8 +311,8 @@
         <div class="drink-name">${esc(d.name)}</div>
         <div class="drink-desc">${esc(d.desc)}</div>
         <div class="drink-meta">
-          ${state.bar === "all" || lead ? `<span class="pill">${esc(BAR[d.bar].name)}</span>` : ""}
-          ${mine ? `<span class="pill mine">Du: ${mine.stars} ★</span>` : `<span class="pill todo">Ikke smakt</span>`}
+          ${mine ? `<span class="pill mine">Du: ${mine.score}</span>` : `<span class="pill todo">Ikke smakt</span>`}
+          <span class="where-small">${esc(barNames(d.bars))}</span>
         </div>
       </div>
       <div class="score ${s ? "" : "none"}">
@@ -288,8 +324,8 @@
 
   function viewList() {
     return `<div class="search">${ICONS.search}<input class="input" name="q" type="search" placeholder="Søk etter drink eller ingrediens" value="${esc(state.q)}" autocomplete="off" enterkeyhint="search"></div>
-      ${chips([{ id: "all", name: "Alle barer" }, ...BARS], state.bar, "bar")}
       ${chips(CATS, state.cat, "cat")}
+      ${chips([{ id: "all", name: "Alle barer" }, ...BARS], state.bar, "bar")}
       <div id="results">${listResults()}</div>`;
   }
 
@@ -297,17 +333,16 @@
     const map = byDrink();
     const q = norm(state.q);
     const hits = DRINKS.filter((d) =>
-      (state.bar === "all" || d.bar === state.bar) &&
+      (state.bar === "all" || d.bars.includes(state.bar)) &&
       (state.cat === "all" || d.cat === state.cat) &&
       (!q || norm(d.name + " " + d.desc).includes(q)));
 
-    let html = "";
     if (!hits.length) return `<div class="empty"><b>Ingen treff</b>Prøv et annet søk eller filter.</div>`;
-
-    for (const bar of BARS) {
-      const rows = hits.filter((d) => d.bar === bar.id);
+    let html = "";
+    for (const cat of ["cocktail", "free", "beerwine"]) {
+      const rows = hits.filter((d) => d.cat === cat);
       if (!rows.length) continue;
-      html += `<div class="section-title"><h2>${esc(bar.name)}</h2><small>${esc(bar.sub)}</small></div>
+      html += `<div class="section-title"><h2>${CAT_TITLE[cat]}</h2><small>${rows.length} stk</small></div>
         <div class="list">${rows.map((d) => drinkRow(d, map)).join("")}</div>`;
     }
     return html;
@@ -332,7 +367,7 @@
       ${chips(CATS, state.topCat, "topcat")}`;
 
     if (!ranked.length) {
-      return html + `<div class="empty"><b>Ingen vurderinger ennå</b>Gå til «Drinker» og gi stjerner til det du har smakt.</div>`;
+      return html + `<div class="empty"><b>Ingen vurderinger ennå</b>Gå til «Drinker» og gi karakter til det du har smakt.</div>`;
     }
     const medals = ["🥇", "🥈", "🥉"];
     html += `<div class="list">${ranked.map((x, i) =>
@@ -344,30 +379,37 @@
     const map = byDrink();
     const me = norm(state.session.name);
     const mine = state.ratings
-      .filter((r) => norm(r.name) === me && DRINK[r.drink])
-      .sort((a, b) => b.stars - a.stars || String(b.at).localeCompare(String(a.at)));
+      .filter((r) => norm(r.name) === me)
+      .sort((a, b) => b.score - a.score || String(b.at).localeCompare(String(a.at)));
 
     let html = `<div class="stats">
         <div class="stat"><b>${mine.length}</b><span>smakt</span></div>
         <div class="stat"><b>${DRINKS.length - mine.length}</b><span>igjen</span></div>
-        <div class="stat"><b>${mine.length ? fmt(mine.reduce((s, r) => s + r.stars, 0) / mine.length) : "–"}</b><span>ditt snitt</span></div>
+        <div class="stat"><b>${mine.length ? fmt(mine.reduce((s, r) => s + r.score, 0) / mine.length) : "–"}</b><span>ditt snitt</span></div>
       </div>`;
     if (!mine.length) {
-      return html + `<div class="empty"><b>Du har ikke vurdert noe ennå</b>Trykk på en drink under «Drinker» for å gi stjerner.</div>`;
+      return html + `<div class="empty"><b>Du har ikke vurdert noe ennå</b>Trykk på en drink under «Drinker» for å gi karakter.</div>`;
     }
     html += `<div class="section-title"><h2>Dine favoritter</h2></div>
-      <div class="list">${mine.map((r) => drinkRow(DRINK[r.drink], map, "")).join("")}</div>`;
+      <div class="list">${mine.map((r) => drinkRow(DRINK[r.drink], map)).join("")}</div>`;
     return html;
   }
 
   // ── Sheet ──────────────────────────────────────────────────
   function openDrink(id) {
     const mine = myRating(byDrink()[id]);
+    const d = DRINK[id];
     state.sheet = id;
     state.sheetOpened = true;
-    state.draft = { stars: mine?.stars || 0, comment: mine?.comment || "" };
-    render();
+    state.draft = {
+      score: mine?.score || 0,
+      bar: mine ? mine.bar || "" : (state.bar !== "all" && d.bars.includes(state.bar) ? state.bar : ""),
+      comment: mine?.comment || "",
+    };
+    lastTaps = [];
+    had67.comment = has67(state.draft.comment);
     document.body.style.overflow = "hidden";
+    render();
   }
   function closeSheet() {
     state.sheet = null;
@@ -382,45 +424,50 @@
         <div class="sheet menu-sheet" role="dialog" aria-modal="true"><div class="wrap">
           <div class="grab"></div>
           <div class="sheet-head"><h2>${esc(state.session.name)}</h2><button class="close" data-act="close" aria-label="Lukk">${ICONS.close}</button></div>
-          <p class="hint">Tips: Legg siden til på hjemskjermen (Del → «Legg til på Hjem-skjerm») så åpner den som en app.</p>
+          <p class="hint">Tips: Legg siden til på hjemskjermen (Del → «Legg til på Hjem-skjerm»), så åpner den som en app.</p>
           <button class="btn" data-act="refresh">Oppdater</button>
           <button class="btn ghost" style="width:100%" data-act="logout">Logg ut</button>
         </div></div>`;
     }
     const d = DRINK[state.sheet];
-    const list = (byDrink()[d.id] || []).slice().sort((a, b) => b.stars - a.stars);
+    const list = (byDrink()[d.id] || []).slice().sort((a, b) => b.score - a.score);
     const s = summary(list);
     const mine = myRating(list);
-    const st = state.draft.stars;
+    const sc = state.draft.score;
+    const barOpts = [{ id: "", name: "Ikke valgt" }, ...d.bars.map((id) => BAR[id])];
     return `<div class="backdrop" data-act="close"></div>
       <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(d.name)}"><div class="wrap">
         <div class="grab"></div>
         <div class="sheet-head">
-          <div><h2>${esc(d.name)}</h2><div class="where">${esc(BAR[d.bar].name)}${d.tag ? ` · ${esc(d.tag)}` : ""}</div></div>
+          <div><h2>${esc(d.name)}</h2><div class="where">${esc(barNames(d.bars))}</div></div>
           <button class="close" data-act="close" aria-label="Lukk">${ICONS.close}</button>
         </div>
         <p class="desc">${esc(d.desc)}</p>
         ${d.flav ? `<p class="flav">Smaker: ${esc(d.flav)}</p>` : ""}
 
         <div class="rate-box">
-          <h3>${mine ? "Din vurdering" : "Hva syns du?"}</h3>
-          <div class="stars" role="radiogroup" aria-label="Stjerner">
-            ${[1, 2, 3, 4, 5].map((n) => `<button class="star ${n <= st ? "on" : ""}" data-star="${n}" role="radio" aria-checked="${n === st}" aria-label="${n} stjerner">${STAR_SVG}</button>`).join("")}
+          <h3>${mine ? "Din karakter" : "Hva syns du?"}</h3>
+          <div class="scores" role="radiogroup" aria-label="Karakter fra 1 til 10">
+            ${Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
+              `<button class="sc ${n === sc ? "on" : ""} ${n < sc ? "fill" : ""}" data-score="${n}" role="radio" aria-checked="${n === sc}">${n}</button>`).join("")}
           </div>
-          <div class="star-label">${STAR_WORDS[st] || "&nbsp;"}</div>
+          <div class="star-label">${sc ? `${sc}/10 · ${SCORE_WORDS[sc]}` : "&nbsp;"}</div>
+          ${d.bars.length > 1 ? `<div class="bar-pick"><span>Hvor smakte du den? <em>(valgfritt)</em></span>
+            <div class="chips tight">${barOpts.map((b) =>
+              `<button class="chip ${state.draft.bar === b.id ? "on" : ""}" data-pickbar="${b.id}">${esc(b.name)}</button>`).join("")}</div></div>` : ""}
           <textarea class="input" name="comment" maxlength="300" placeholder="Kommentar (valgfritt)">${esc(state.draft.comment)}</textarea>
           <div class="row">
             ${mine ? `<button class="btn ghost" data-act="remove" ${state.saving ? "disabled" : ""}>Fjern</button>` : ""}
-            <button class="btn coral" data-act="save" ${!st || state.saving ? "disabled" : ""}>${state.saving ? "Lagrer …" : mine ? "Oppdater" : "Lagre"}</button>
+            <button class="btn coral" data-act="save" ${!sc || state.saving ? "disabled" : ""}>${state.saving ? "Lagrer …" : mine ? "Oppdater" : "Lagre"}</button>
           </div>
         </div>
 
         <div class="family">
-          <h3>Familien ${s ? `· ${fmt(s.avg)} ★` : ""}</h3>
+          <h3>Familien ${s ? `· snitt ${fmt(s.avg)}` : ""}</h3>
           ${list.length ? list.map((r) => `<div class="review">
               <div class="avatar" style="background:${colorFor(r.name)}">${initial(r.name)}</div>
               <div class="review-body">
-                <div class="review-top"><span>${esc(r.name)}</span><span class="mini-stars">${miniStars(r.stars)}</span></div>
+                <div class="review-top"><span>${esc(r.name)}${r.bar && BAR[r.bar] && d.bars.length > 1 ? ` <small>på ${esc(BAR[r.bar].name)}</small>` : ""}</span><span class="badge">${r.score}/10</span></div>
                 ${r.comment ? `<p>${esc(r.comment)}</p>` : ""}
               </div></div>`).join("")
             : `<p class="hint">Ingen har vurdert denne ennå. Bli den første!</p>`}
@@ -430,19 +477,21 @@
 
   async function saveRating(remove) {
     const id = state.sheet;
-    const stars = remove ? null : state.draft.stars;
+    const d = DRINK[id];
+    const score = remove ? null : state.draft.score;
+    const bar = remove ? null : state.draft.bar || (d.bars.length === 1 ? d.bars[0] : null);
     const comment = remove ? null : state.draft.comment.trim();
     state.saving = true; render();
     try {
-      const res = await rpc("dr_rate", { p_token: state.session.token, p_drink: id, p_stars: stars, p_comment: comment });
+      const res = await rpc("dr_rate", { p_token: state.session.token, p_drink: id, p_score: score, p_bar: bar, p_comment: comment });
       state.saving = false;
       if (res.error === "BAD_TOKEN") { logout(); return; }
       if (res.error) { render(); toast("Kunne ikke lagre. Prøv igjen."); return; }
       const me = norm(state.session.name);
       state.ratings = state.ratings.filter((r) => !(r.drink === id && norm(r.name) === me));
-      if (!remove) state.ratings.unshift({ drink: id, name: state.session.name, stars, comment: comment || null, at: new Date().toISOString() });
+      if (!remove) state.ratings.unshift({ drink: id, name: state.session.name, score, bar, comment: comment || null, at: new Date().toISOString() });
       closeSheet();
-      toast(remove ? "Vurdering fjernet" : `Lagret: ${stars} ★ for ${DRINK[id].name}`);
+      toast(remove ? "Vurdering fjernet" : `Lagret: ${score}/10 for ${d.name}`);
       refresh();
     } catch {
       state.saving = false; render(); toast(ERR.NETWORK);
@@ -450,24 +499,34 @@
   }
 
   // ── Events ─────────────────────────────────────────────────
+  let lastTaps = []; // score taps, to catch a quick 6 → 7
+
   root.addEventListener("click", (e) => {
     const t = e.target.closest("button, .backdrop");
     if (!t) return;
     const ds = t.dataset;
-    if (ds.pick) { Object.assign(login, { mode: "pin", name: ds.pick, error: "" }); drawLogin(); return; }
+    if (ds.pick) {
+      Object.assign(login, { mode: isRegistered(ds.pick) ? "pin" : "new", name: ds.pick, error: "" });
+      drawLogin();
+      return;
+    }
     if (ds.tab) { state.tab = ds.tab; render(); window.scrollTo(0, 0); return; }
     if (ds.bar) { state.bar = ds.bar; render(); return; }
     if (ds.cat) { state.cat = ds.cat; render(); return; }
     if (ds.topcat) { state.topCat = ds.topcat; render(); return; }
     if (ds.drink) { openDrink(ds.drink); return; }
-    if (ds.star) {
-      state.draft.comment = root.querySelector("textarea[name=comment]")?.value ?? state.draft.comment;
-      state.draft.stars = Number(ds.star);
+    if (ds.score) {
+      const n = Number(ds.score);
+      state.draft.score = n;
       render();
+      const now = Date.now();
+      lastTaps = [...lastTaps.filter((x) => now - x.t < 2000), { n, t: now }].slice(-2);
+      if (lastTaps.length === 2 && lastTaps[0].n === 6 && lastTaps[1].n === 7) { lastTaps = []; sixSeven(); }
       return;
     }
+    if (ds.pickbar !== undefined) { state.draft.bar = ds.pickbar; render(); return; }
     switch (ds.act) {
-      case "new": Object.assign(login, { mode: "new", name: "", error: "" }); drawLogin(); break;
+      case "retry": login.error = ""; renderLogin(); break;
       case "back": Object.assign(login, { mode: "pick", error: "" }); drawLogin(); break;
       case "menu": state.sheet = "menu"; state.sheetOpened = true; document.body.style.overflow = "hidden"; render(); break;
       case "close": closeSheet(); break;
@@ -485,10 +544,17 @@
     submitLogin(form, form.dataset.form);
   });
 
+  // "67" typed into the search or a comment → 6-7 animation (once per time it appears).
+  let had67 = { q: false, comment: false };
   root.addEventListener("input", (e) => {
-    if (e.target.name === "q") { state.q = e.target.value; updateResults(); }
-    else if (e.target.name === "comment" && state.draft) state.draft.comment = e.target.value;
-    else if (e.target.name === "pin") e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+    const el = e.target;
+    if (el.name === "pin" || el.name === "pin2") { el.value = el.value.replace(/\D/g, "").slice(0, 4); return; }
+    if (el.name === "q") { state.q = el.value; updateResults(); }
+    else if (el.name === "comment" && state.draft) state.draft.comment = el.value;
+    else return;
+    const now = has67(el.value);
+    if (now && !had67[el.name]) sixSeven();
+    had67[el.name] = now;
   });
 
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.sheet) closeSheet(); });

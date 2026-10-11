@@ -19,11 +19,28 @@ create table if not exists public.dr_users (
 create table if not exists public.dr_ratings (
   user_id    uuid not null references public.dr_users(id) on delete cascade,
   drink_id   text not null,
-  stars      int  not null check (stars between 1 and 5),
+  score      int  not null,
+  bar        text,
   comment    text check (char_length(comment) <= 300),
   updated_at timestamptz not null default now(),
   primary key (user_id, drink_id)
 );
+
+-- Upgrade from the first version (1–5 stars, no bar).
+do $$ begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'dr_ratings' and column_name = 'stars') then
+    alter table public.dr_ratings rename column stars to score;
+  end if;
+end $$;
+alter table public.dr_ratings add column if not exists bar text;
+alter table public.dr_ratings drop constraint if exists dr_ratings_stars_check;
+alter table public.dr_ratings drop constraint if exists dr_ratings_score_check;
+alter table public.dr_ratings add constraint dr_ratings_score_check check (score between 1 and 10);
+alter table public.dr_ratings drop constraint if exists dr_ratings_bar_check;
+alter table public.dr_ratings add constraint dr_ratings_bar_check check (bar is null or bar ~ '^[a-z]{2,10}$');
+drop function if exists public.dr_rate(uuid, text, int, text, text);
+drop function if exists public.dr_ratings(uuid);
 
 -- Tables are only reachable through the functions below.
 alter table public.dr_users   enable row level security;
@@ -95,17 +112,18 @@ begin
     'me', v_me.name,
     'ratings', coalesce((
       select json_agg(json_build_object(
-               'drink', r.drink_id, 'name', u.name, 'stars', r.stars,
+               'drink', r.drink_id, 'name', u.name, 'score', r.score, 'bar', r.bar,
                'comment', r.comment, 'at', r.updated_at) order by r.updated_at desc)
         from dr_ratings r join dr_users u on u.id = r.user_id), '[]'::json));
 end $$;
 
--- Set (or with p_stars = null, remove) my rating of a drink.
-create or replace function public.dr_rate(p_token uuid, p_drink text, p_stars int, p_comment text)
+-- Set (or with p_score = null, remove) my rating of a drink. p_bar is optional.
+create or replace function public.dr_rate(p_token uuid, p_drink text, p_score int, p_bar text, p_comment text)
 returns json language plpgsql security definer set search_path = public as $$
 declare
   v_me dr_users;
   v_comment text := nullif(btrim(coalesce(p_comment, '')), '');
+  v_bar text := nullif(btrim(coalesce(p_bar, '')), '');
 begin
   select * into v_me from dr_users where token = p_token;
   if not found then
@@ -114,23 +132,26 @@ begin
   if coalesce(p_drink, '') !~ '^[a-z0-9-]{1,60}$' then
     return json_build_object('error', 'BAD_DRINK');
   end if;
-  if p_stars is null then
+  if p_score is null then
     delete from dr_ratings where user_id = v_me.id and drink_id = p_drink;
     return json_build_object('ok', true);
   end if;
-  if p_stars < 1 or p_stars > 5 then
-    return json_build_object('error', 'BAD_STARS');
+  if p_score < 1 or p_score > 10 then
+    return json_build_object('error', 'BAD_SCORE');
   end if;
-  insert into dr_ratings (user_id, drink_id, stars, comment)
-  values (v_me.id, p_drink, p_stars, left(v_comment, 300))
+  if v_bar is not null and v_bar !~ '^[a-z]{2,10}$' then
+    return json_build_object('error', 'BAD_BAR');
+  end if;
+  insert into dr_ratings (user_id, drink_id, score, bar, comment)
+  values (v_me.id, p_drink, p_score, v_bar, left(v_comment, 300))
   on conflict (user_id, drink_id)
-  do update set stars = excluded.stars, comment = excluded.comment, updated_at = now();
+  do update set score = excluded.score, bar = excluded.bar, comment = excluded.comment, updated_at = now();
   return json_build_object('ok', true);
 end $$;
 
 revoke all on function public.dr_list_users(), public.dr_register(text, text),
-  public.dr_login(text, text), public.dr_get_ratings(uuid), public.dr_rate(uuid, text, int, text) from public;
+  public.dr_login(text, text), public.dr_get_ratings(uuid), public.dr_rate(uuid, text, int, text, text) from public;
 grant execute on function public.dr_list_users(), public.dr_register(text, text),
-  public.dr_login(text, text), public.dr_get_ratings(uuid), public.dr_rate(uuid, text, int, text) to anon, authenticated;
+  public.dr_login(text, text), public.dr_get_ratings(uuid), public.dr_rate(uuid, text, int, text, text) to anon, authenticated;
 
 notify pgrst, 'reload schema';
