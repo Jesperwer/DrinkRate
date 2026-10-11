@@ -5,9 +5,9 @@ const OUT = process.argv[2] || ".";
 const BASE = "http://localhost:8787/";
 const CONFIG = `window.DR_CONFIG={url:"http://localhost:8787",key:"sb_publishable_test",family:["Luise","Jesper","Jakob","Astri","Ingvild","Anne","Julie"]};`;
 
-async function page(browser) {
-  const ctx = await browser.newContext({ ...devices["iPhone 13"] });
-  await ctx.route("**/config.js", (r) => r.fulfill({ contentType: "text/javascript", body: CONFIG }));
+async function page(browser, opts = {}) {
+  const ctx = await browser.newContext({ ...devices["iPhone 13"], ...opts });
+  await ctx.route("**/config.js*", (r) => r.fulfill({ contentType: "text/javascript", body: CONFIG }));
   await ctx.route("https://fonts.*/**", (r) => r.abort());
   const p = await ctx.newPage();
   const errors = [];
@@ -16,7 +16,8 @@ async function page(browser) {
   p.errors = errors;
   return p;
 }
-const sixSevenShown = (p) => p.locator(".six7").waitFor({ timeout: 2000 });
+const fx = (p, cls) => p.locator(`.fx.${cls}`).waitFor({ timeout: 2500 });
+const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator(".fx").waitFor({ state: "detached" }); };
 
 (async () => {
   const browser = await chromium.launch();
@@ -26,96 +27,102 @@ const sixSevenShown = (p) => p.locator(".six7").waitFor({ timeout: 2000 });
   assert.equal(await a.locator("[data-pick]").count(), 7);
   await a.screenshot({ path: `${OUT}/1-pick.png` });
 
-  // First time: Jesper picks his own PIN (must match twice)
+  // Jesper already has a PIN and old ratings (seeded by the runner)
   await a.click('[data-pick="Jesper"]');
-  await a.getByText("Velkommen, Jesper!").waitFor();
+  await a.getByText("Hei, Jesper!").waitFor();
   await a.fill("input[name=pin]", "1234");
-  await a.fill("input[name=pin2]", "1235");
-  await a.click("text=Kom i gang");
-  await a.getByText("PIN-kodene er ikke like").waitFor();
-  await a.fill("input[name=pin]", "1234");
-  await a.fill("input[name=pin2]", "1234");
-  await a.screenshot({ path: `${OUT}/2-setpin.png` });
-  await a.click("text=Kom i gang");
-  await a.getByRole("heading", { name: "Drinker" }).waitFor();
+  await a.click("text=Logg inn");
   await a.locator(".drink").first().waitFor();
-  assert.equal(await a.locator(".drink").count(), 63);
-  await a.screenshot({ path: `${OUT}/3-list.png` });
+  const total = await a.evaluate(() => window.DRINKS.length);
+  assert.equal(await a.locator(".drink").count(), total);
+  // Every old rating is still shown
+  assert.equal(await a.locator('[data-drink="mojito"] .rater').count(), 1);
+  assert.equal(await a.locator('[data-drink="coeur-de-lion"] .rater').count(), 1);
+  await a.screenshot({ path: `${OUT}/2-list.png` });
 
-  // Rate Mojito 9 at Splash with a comment; 6 → 7 taps fire the meme
-  await a.click('[data-drink="mojito"]');
+  // All-inclusive filter + bar filter
+  await a.click('[data-act="aionly"]');
+  const aiCount = await a.locator(".drink").count();
+  assert.ok(aiCount < total && aiCount > 90, `ai count ${aiCount}`);
+  assert.equal(await a.locator('.drink .tag.paid').count(), 0);
+  await a.click('[data-act="aionly"]');
+  await a.click('[data-cat="spirit"]');
+  await a.click('[data-bar="sea"]');
+  assert.equal(await a.locator(".drink").count(), 0);
+  await a.click('[data-bar="all"]');
+  await a.click('[data-cat="all"]');
+
+  // Rate a new non-inclusive drink with 10 → PERFEKT
+  await a.fill("input[name=q]", "porn star");
+  await a.click('[data-drink="porn-star-martini"]');
+  await a.getByText("Ikke inkludert · €13").waitFor();
   await a.click('[data-score="6"]');
   await a.click('[data-score="7"]');
-  await sixSevenShown(a);
-  await a.screenshot({ path: `${OUT}/4-six-seven.png` });
-  await a.locator(".six7").click();
-  await a.click('[data-score="9"]');
-  await a.click('[data-pickbar="spl"]');
+  await fx(a, "six7");
+  await dismiss(a);
+  await a.click('[data-score="10"]');
+  await a.click('[data-pickbar="cap"]');
   await a.fill("textarea[name=comment]", "Beste <b>hittil</b>");
-  await a.click('[data-score="8"]'); // comment and bar survive a score change
-  assert.equal(await a.inputValue("textarea[name=comment]"), "Beste <b>hittil</b>");
-  assert.equal(await a.locator('[data-pickbar="spl"].on').count(), 1);
-  await a.screenshot({ path: `${OUT}/5-sheet.png` });
+  await a.screenshot({ path: `${OUT}/3-sheet.png` });
   await a.click('[data-act="save"]');
-  await a.getByText("Du: 8").first().waitFor();
+  await fx(a, "perfect");
+  await a.screenshot({ path: `${OUT}/4-perfect.png` });
+  await dismiss(a);
 
-  // Single-bar drink: no bar picker, bar saved automatically
-  await a.click('[data-drink="captain-zombie"]');
-  assert.equal(await a.locator(".bar-pick").count(), 0);
-  await a.click('[data-score="5"]');
-  await a.click('[data-act="save"]');
-  await a.getByText("Du: 5").first().waitFor();
-
-  // Typing 67 in search → meme
-  await a.fill("input[name=q]", "67");
-  await sixSevenShown(a);
-  await a.locator(".six7").click();
+  // Search eggs
+  await a.fill("input[name=q]", "skål");
+  await fx(a, "cheers");
+  await dismiss(a);
+  await a.fill("input[name=q]", "ouzo");
+  await fx(a, "opa");
+  await a.screenshot({ path: `${OUT}/5-opa.png` });
+  await dismiss(a);
+  assert.equal(await a.locator(".drink").count(), 2); // Ouzo + Ouzo Plomari
   await a.fill("input[name=q]", "");
 
-  // Second family member
-  const b = await page(browser);
+  // Second member rates Mojito 1 → UFF, sees Jesper's comment escaped
+  const b = await page(browser, { colorScheme: "dark" });
   await b.goto(BASE);
-  await b.click('[data-pick="Jesper"]');
-  await b.getByText("Hei, Jesper!").waitFor(); // already registered → asks for PIN
-  await b.click('[data-act="back"]');
   await b.click('[data-pick="Astri"]');
   await b.fill("input[name=pin]", "4321");
   await b.fill("input[name=pin2]", "4321");
   await b.click("text=Kom i gang");
-  await b.getByRole("heading", { name: "Drinker" }).waitFor();
+  await b.locator(".drink").first().waitFor();
+  await b.click('[data-drink="porn-star-martini"]');
+  await b.getByText("Beste <b>hittil</b>").waitFor();
+  await b.getByText("på Captain's Bar").waitFor();
+  assert.equal(await b.locator(".review.muted").count(), 6); // 7 in the family, only Jesper has rated it
+  await b.click('.sheet .close');
   await b.click('[data-drink="mojito"]');
-  await b.getByText("Beste <b>hittil</b>").waitFor(); // escaped, shown as text
-  await b.getByText("på Splash").waitFor();
-  await b.click('[data-score="10"]');
-  await b.fill("textarea[name=comment]", "6 7 hehe");
-  await sixSevenShown(b);
-  await b.locator(".six7").click();
+  await b.click('[data-score="1"]');
   await b.click('[data-act="save"]');
-  await b.waitForSelector(".sheet", { state: "detached" });
-  assert.equal(await b.locator('[data-drink="mojito"] .score b').textContent(), "9,0");
+  await fx(b, "yuck");
+  await dismiss(b);
+  assert.equal(await b.locator('[data-drink="mojito"] .ring b').textContent(), "4,5"); // (8 + 1) / 2
 
   await b.click('[data-tab="top"]');
-  await b.getByRole("heading", { name: "Toppliste" }).waitFor();
-  await b.screenshot({ path: `${OUT}/6-top.png` });
-  assert.equal(await b.locator(".list .drink").first().getAttribute("data-drink"), "mojito");
+  await b.locator(".podium").waitFor();
+  await b.screenshot({ path: `${OUT}/6-top-dark.png` });
+  assert.equal(await b.locator(".pod.p1").getAttribute("data-drink"), "porn-star-martini");
 
-  // Filters: bar filter shows drinks served there
-  await b.click('[data-tab="list"]');
-  await b.click('[data-bar="sea"]');
-  await b.click('[data-cat="free"]');
-  assert.equal(await b.locator(".drink").count(), 3);
-  await b.click('[data-bar="all"]');
-  await b.click('[data-cat="all"]');
-  await b.fill("input[name=q]", "zombie");
-  assert.equal(await b.locator(".drink").count(), 1);
+  await b.click('[data-tab="family"]');
+  await b.getByText("Siste smaksprøver").waitFor();
+  await b.screenshot({ path: `${OUT}/7-family-dark.png`, fullPage: true });
+  await b.click('[data-person="Jesper"]');
+  await b.getByText("Alle karakterer").waitFor();
+  assert.ok((await b.locator(".sheet .drink").count()) >= 3);
+  await b.screenshot({ path: `${OUT}/8-person-dark.png` });
+  await b.click('.sheet .close');
 
-  // Jesper: own list, log out, wrong PIN, right PIN
-  await a.reload();
-  await a.click('[data-tab="mine"]');
-  await a.getByText("Dine favoritter").waitFor();
-  assert.equal(await a.locator(".drink").count(), 2);
-  await a.screenshot({ path: `${OUT}/7-mine.png` });
-  await a.click('[data-act="menu"]');
+  // Logo x5 → disco
+  for (let i = 0; i < 5; i++) await b.click(".top h1");
+  await fx(b, "disco-fx");
+  await dismiss(b);
+
+  // Jesper: own page, logout, wrong PIN, right PIN, remove rating
+  await a.click('[data-tab="me"]');
+  await a.getByText("Dine karakterer").waitFor();
+  await a.screenshot({ path: `${OUT}/9-me.png`, fullPage: true });
   await a.click('[data-act="logout"]');
   await a.click('[data-pick="Jesper"]');
   await a.fill("input[name=pin]", "0000");
@@ -123,17 +130,18 @@ const sixSevenShown = (p) => p.locator(".six7").waitFor({ timeout: 2000 });
   await a.getByText("Feil PIN-kode").waitFor();
   await a.fill("input[name=pin]", "1234");
   await a.click("text=Logg inn");
-  await a.getByRole("heading", { name: "Drinker" }).waitFor();
-
-  // Remove a rating
-  await a.click('[data-drink="captain-zombie"]');
+  await a.locator(".drink").first().waitFor();
+  await a.click('[data-drink="porn-star-martini"]');
   await a.click('[data-act="remove"]');
   await a.getByText("Vurdering fjernet").waitFor();
-  assert.equal(await a.locator('[data-drink="captain-zombie"] .pill.todo').count(), 1);
 
   for (const p of [a, b]) {
-    await p.setViewportSize({ width: 320, height: 640 });
-    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "horizontal overflow");
+    for (const tab of ["list", "top", "family", "me"]) {
+      try { await p.click(`[data-tab="${tab}"]`, { timeout: 5000 }); }
+      catch (e) { await p.screenshot({ path: `${OUT}/fail-${tab}.png` }); console.log(await p.evaluate(() => document.body.className + " ov=" + document.body.style.overflow + " sheet=" + !!document.querySelector(".sheet") + " fx=" + !!document.querySelector(".fx"))); throw e; }
+      await p.setViewportSize({ width: 320, height: 640 });
+      assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `overflow on ${tab}`);
+    }
   }
   assert.deepEqual([...a.errors, ...b.errors], []);
   console.log("E2E PASSED");

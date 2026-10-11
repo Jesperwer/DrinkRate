@@ -14,7 +14,9 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
 - Familien står i `site/config.js` (`family`). Første gang man trykker på navnet sitt,
   velger man selv en 4-sifret PIN-kode. Etter 8 feil forsøk sperres brukeren i 5 minutter.
 - Karakter 1–10 per drink. Drinkene er felles for alle barene. Hvor man smakte den er valgfritt.
-- Skriver man «67» i søk eller kommentar (eller trykker 6 og så 7), kommer 6-7-animasjonen.
+- Alle drinker fra menyene er med. `ai` sier hvor drinken er all inclusive, `price` hva den koster ellers.
+- Påskeegg: «67» (eller 6 så 7 på karakterknappene), karakter 10 og 1, søk «skål» / «ouzo» / «opa» / «disco»,
+  og trykk 5 ganger raskt på «DrinkRate»-tittelen.
 
 Nullstille en glemt PIN (Supabase → SQL Editor, bytt ut navn og PIN):
 
