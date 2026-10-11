@@ -39,7 +39,7 @@ alter table public.dr_ratings drop constraint if exists dr_ratings_score_check;
 alter table public.dr_ratings add constraint dr_ratings_score_check check (score between 1 and 10);
 alter table public.dr_ratings drop constraint if exists dr_ratings_bar_check;
 alter table public.dr_ratings add constraint dr_ratings_bar_check check (bar is null or bar ~ '^[a-z]{2,10}$');
-drop function if exists public.dr_rate(uuid, text, int, text, text);
+drop function if exists public.dr_rate(uuid, text, int, text);
 drop function if exists public.dr_ratings(uuid);
 
 -- Tables are only reachable through the functions below.
