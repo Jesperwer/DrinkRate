@@ -153,6 +153,8 @@
     const have = store.get("stickers", []);
     if (have.includes(id)) return;
     store.set("stickers", [...have, id]);
+    (serverStickers[norm(state.session.name)] ||= new Set()).add(id);
+    rpc("dr_award", { p_token: state.session.token, p_sticker: id }).catch(() => { /* synced on next refresh */ });
     if (quiet) return;
     const st = STICKERS.find((x) => x.id === id);
     setTimeout(() => {
@@ -295,10 +297,38 @@
     try { s ? localStorage.setItem(LS_KEY, JSON.stringify(s)) : localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
   }
 
+  // Everyone's stickers. Ones found on this phone before stickers were shared
+  // (or while offline) are sent up here.
+  let serverStickers = {};
+  let stickersShared = false;
+  async function loadStickers() {
+    try {
+      const res = await rpc("dr_get_stickers", { p_token: state.session.token });
+      if (!Array.isArray(res)) return;
+      const map = {};
+      for (const x of res) (map[norm(x.name)] ||= new Set()).add(x.sticker);
+      serverStickers = map;
+      stickersShared = true;
+      const mine = map[norm(state.session.name)] || new Set();
+      for (const id of store.get("stickers", [])) {
+        if (!mine.has(id) && STICKERS.some((st) => st.id === id)) {
+          mine.add(id);
+          rpc("dr_award", { p_token: state.session.token, p_sticker: id }).catch(() => {});
+        }
+      }
+      map[norm(state.session.name)] = mine;
+    } catch { /* stickers.sql not run yet: own stickers still show from this phone */ }
+  }
+  function stickersOf(name) {
+    const set = new Set(serverStickers[norm(name)] || []);
+    if (isMe(name)) for (const id of store.get("stickers", [])) set.add(id);
+    return STICKERS.filter((st) => set.has(st.id)).map((st) => st.id);
+  }
+
   async function refresh() {
     if (!state.session) return;
     try {
-      const data = await rpc("dr_get_ratings", { p_token: state.session.token });
+      const [data] = await Promise.all([rpc("dr_get_ratings", { p_token: state.session.token }), loadStickers()]);
       if (data.error === "BAD_TOKEN") { logout(); return; }
       state.ratings = (data.ratings || []).filter((r) => DRINK[r.drink]);
       if (data.me && data.me !== state.session.name) saveSession({ ...state.session, name: data.me });
@@ -655,6 +685,8 @@
     if (tens && tens.t) out.push({ e: "💯", t: "Flest tiere", name: tens.name, v: `${tens.t} stk` });
     const best = ranked("all")[0];
     if (best) out.push({ e: "👑", t: "Familiens favoritt", drink: best.d, v: fmt(best.s.avg) });
+    const collector = people().map((name) => ({ name, n: stickersOf(name).length })).sort((a, b) => b.n - a.n)[0];
+    if (collector && collector.n) out.push({ e: "🏅", t: "Flest klistremerker", name: collector.name, v: `${collector.n} av ${STICKERS.length}` });
     return out;
   }
 
@@ -676,6 +708,7 @@
         ${avatar(name, "lg")}
         <span class="pcard-main"><b>${esc(name)}${isMe(name) ? " <em>(deg)</em>" : ""}</b>
           <small>${rs.length ? `${rs.length} smakt · favoritt: ${esc(DRINK[fav.drink].name)}` : "Har ikke smakt noe ennå"}</small></span>
+        ${stickersOf(name).length ? `<span class="pcard-stickers" title="Klistremerker">${stickersOf(name).slice(0, 3).map((id) => STICKERS.find((st) => st.id === id).e).join("")}<small>${stickersOf(name).length}</small></span>` : ""}
         ${rs.length ? `<span class="pcard-avg" style="--rc:${scoreColor(avg)}">${fmt(avg)}</span>` : ""}
       </button>`;
     }
@@ -843,6 +876,8 @@
     if (state.sheet.startsWith("person:")) {
       const name = state.sheet.slice(7);
       return sheetWrap(`<div class="sheet-head"><div class="sheet-title">${avatar(name, "lg")}<div><h2>${esc(name)}</h2><div class="where">Alle karakterer</div></div></div>${closeBtn}</div>
+        ${stickerBook(name)}
+        <div class="section-title"><h2>Karakterer</h2></div>
         ${personBody(name)}`, name);
     }
 
@@ -1062,8 +1097,9 @@
       <div class="list">${list.map((id) => drinkRow(DRINK[id])).join("")}</div>`;
   }
 
-  function stickerBook() {
-    const have = store.get("stickers", []);
+  function stickerBook(name = state.session.name) {
+    const have = stickersOf(name);
+    if (!isMe(name) && !stickersShared) return "";
     return `<div class="section-title"><h2>Klistremerker</h2><small>${have.length} av ${STICKERS.length} funnet</small></div>
       <div class="stickers">${STICKERS.map((st) => have.includes(st.id)
         ? `<span class="sticker s-${st.id}" title="${esc(st.name)}"><span>${st.e}</span><b>${esc(st.name)}</b></span>`
