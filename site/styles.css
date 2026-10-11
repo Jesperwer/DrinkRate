@@ -510,7 +510,6 @@ main { padding-bottom: calc(110px + var(--safe-b)); animation: fadeup .35s ease 
 .clink { position: relative; display: flex; font-size: min(30vw, 170px); }
 .clink .g1 { display: inline-block; transform-origin: bottom right; animation: clinkL .7s cubic-bezier(.3, 1.6, .5, 1) both; }
 .clink .g2 { display: inline-block; transform-origin: bottom left; animation: clinkR .7s cubic-bezier(.3, 1.6, .5, 1) both; }
-.opa { --life: 2.6s; background: radial-gradient(circle at 50% 45%, #6fc3ea, #1565c0); }
 .disco-fx { --life: 2.4s; background: radial-gradient(circle at 50% 45%, rgba(160, 80, 255, .85), rgba(30, 10, 60, .9)); }
 body.disco main, body.disco .top, body.disco .nav { animation: hue 1.6s linear infinite; }
 body.quake #root { animation: quake .6s linear; }
@@ -591,3 +590,54 @@ body.quake #root { animation: quake .6s linear; }
 .lb-close { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); right: 14px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .15); color: #fff; }
 .pcard-stickers { display: inline-flex; align-items: center; gap: 1px; font-size: 16px; flex: none; }
 .pcard-stickers small { margin-left: 4px; font-size: 12px; font-weight: 700; color: var(--muted); }
+
+/* ── Disco ball ────────────────────────────────── */
+.disco-fx { --life: 2.6s; background: radial-gradient(circle at 50% 40%, #3a1a6e, #120626 75%); }
+.ball {
+  --s: 92px;
+  position: relative; width: var(--s); height: var(--s); border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 35% 30%, #ffffff, #d9dde6 25%, #8a93a6 60%, #3c4252 100%);
+  box-shadow: 0 0 30px rgba(190, 210, 255, .55), 0 0 80px rgba(160, 120, 255, .35);
+}
+.ball.big { --s: min(52vw, 230px); }
+.ball .tiles {
+  position: absolute; inset: 0; border-radius: 50%;
+  background:
+    repeating-linear-gradient(0deg, rgba(20, 24, 34, .55) 0 1.5px, transparent 1.5px calc(var(--s) / 11)),
+    repeating-linear-gradient(90deg, rgba(20, 24, 34, .55) 0 1.5px, transparent 1.5px calc(var(--s) / 11)),
+    conic-gradient(from 0deg, rgba(255, 94, 168, .35), rgba(94, 231, 255, .35), rgba(255, 228, 94, .35), rgba(157, 123, 255, .35), rgba(255, 94, 168, .35));
+  background-size: calc(var(--s) * 1.4) 100%, 100% 100%, 100% 100%;
+  animation: tiles 2.2s linear infinite;
+  mask-image: radial-gradient(circle at 50% 50%, #000 62%, rgba(0, 0, 0, .55) 100%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 62%, rgba(0, 0, 0, .55) 100%);
+}
+.ball .shine { position: absolute; left: 18%; top: 14%; width: 30%; height: 22%; border-radius: 50%; background: radial-gradient(rgba(255, 255, 255, .95), transparent 70%); filter: blur(2px); }
+.ball .glint { position: absolute; color: #fff; text-shadow: 0 0 8px #fff; animation: glint 1.2s ease-in-out infinite; font-size: calc(var(--s) * .18); }
+.ball .g1 { left: 22%; top: 48%; }
+.ball .g2 { right: 20%; top: 26%; animation-delay: .6s; }
+.ball-drop { position: relative; display: flex; flex-direction: column; align-items: center; margin-bottom: 14px; animation: drop .9s cubic-bezier(.3, 1.4, .5, 1) both; }
+.ball-drop .string, .disco-hang .string { display: block; width: 2px; height: 22vh; background: linear-gradient(rgba(255, 255, 255, .1), rgba(255, 255, 255, .7)); }
+.ball-drop .ball { animation: sway 2.4s ease-in-out infinite; }
+
+.disco-hang {
+  position: fixed; top: 0; left: 50%; z-index: 42; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center;
+  animation: drop .8s cubic-bezier(.3, 1.4, .5, 1) both; cursor: pointer;
+}
+.disco-hang .string { height: 54px; }
+.disco-hang .ball { --s: 76px; animation: sway 2.4s ease-in-out infinite; }
+.disco-hang .spots { position: fixed; inset: 0; pointer-events: none; animation: spin 7s linear infinite; }
+.disco-hang .spots b {
+  --a: 0deg; --c: #fff;
+  position: absolute; left: 50%; top: 96px; width: 16px; height: 16px; border-radius: 50%; background: var(--c);
+  box-shadow: 0 0 18px 6px var(--c); opacity: .7; mix-blend-mode: screen;
+  transform: rotate(var(--a)) translateY(min(60vh, 420px)); transform-origin: 0 0;
+  animation: twinkle 1.6s ease-in-out var(--d) infinite;
+}
+@keyframes tiles { to { background-position: calc(var(--s) * -1.4) 0, 0 0, 0 0; } }
+@keyframes glint { 0%, 100% { opacity: 0; transform: scale(.4); } 50% { opacity: 1; transform: scale(1.1); } }
+@keyframes drop { from { transform: translateY(-120%); } }
+.disco-hang { animation-name: dropc; }
+@keyframes dropc { from { transform: translate(-50%, -140%); } to { transform: translate(-50%, 0); } }
+@keyframes sway { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes twinkle { 0%, 100% { opacity: .25; } 50% { opacity: .85; } }

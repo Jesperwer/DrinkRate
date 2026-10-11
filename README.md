@@ -16,7 +16,7 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
 - Karakter 1–10 per drink. Drinkene er felles for alle barene. Hvor man smakte den er valgfritt.
 - Alle drinker fra menyene er med. `ai` sier hvor drinken er all inclusive, `price` hva den koster ellers.
 - Bilder: hver vurdering kan ha ett bilde, krympet på telefonen (maks 1280 px) før opplasting, lagret i `dr_photos`.
-- Påskeegg: «67» (eller 6 så 7 på karakterknappene), karakter 10 og 1, søk «skål» / «ouzo» / «opa» / «disco»,
+- Påskeegg: «67» (eller 6 så 7 på karakterknappene), karakter 10 og 1, søk «skål» / «disco» / «Miranda»,
   og trykk 5 ganger raskt på «DrinkRate»-tittelen.
 
 Nullstille en glemt PIN (Supabase → SQL Editor, bytt ut navn og PIN):

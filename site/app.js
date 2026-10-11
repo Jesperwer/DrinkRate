@@ -144,9 +144,7 @@
     { id: "agree", e: "🙌", name: "Enige" },
     { id: "match", e: "💘", name: "Match" },
     { id: "cheers", e: "🥂", name: "Skål" },
-    { id: "opa", e: "🍽️", name: "Opa!" },
     { id: "disco", e: "🪩", name: "Disco" },
-    { id: "owl", e: "🦉", name: "Natteravn" },
   ];
   function award(id, quiet) {
     if (!state.session) return;
@@ -166,6 +164,8 @@
       setTimeout(() => el.remove(), 2800);
     }, document.querySelector(".fx") ? 2200 : 0);
   }
+
+  const discoBall = (size) => `<div class="ball ${size}"><span class="tiles"></span><span class="shine"></span><span class="glint g1">✦</span><span class="glint g2">✦</span></div>`;
 
   const EGGS = {
     sixSeven() {
@@ -191,11 +191,6 @@
         <div class="clink"><span class="g1">🥂</span><span class="g2">🥂</span></div><div class="fx-text">SKÅL!</div>`, 2600);
       vibrate([30, 60, 30]);
     },
-    opa() {
-      showFx("opa", `<div class="fx-burst">${rain(["🍽️", "💥", "🍽️", "🇬🇷", "🇨🇾"], 26)}</div>
-        <div class="fx-text big">OPA!</div><div class="fx-sub">Knus en tallerken for meg</div>`, 2600);
-      vibrate([80, 40, 80]);
-    },
     miranda() {
       showFx("miranda-fx", `<div class="fx-burst">${rain(["✨", "💖", "⭐", "💅"], 28)}</div>
         <div class="mega-sticker"><span class="holo"></span><span class="ms-e">👑</span><b>MIRANDA</b><small>Limited edition</small></div>`, 3400);
@@ -214,13 +209,25 @@
       vibrate([60, 40, 60]);
     },
     disco() {
+      // A mirror ball drops in, then hangs over the page while the lights spin.
+      document.querySelector(".disco-hang")?.remove();
       document.body.classList.add("disco");
-      showFx("disco-fx", `<div class="fx-burst">${rain(["🪩", "💃", "🕺", "✨", "🎶"], 30)}</div><div class="fx-text">DISCO!</div>`, 2400);
-      setTimeout(() => document.body.classList.remove("disco"), 9000);
+      showFx("disco-fx", `<div class="fx-burst">${rain(["✨", "💃", "🕺", "✨", "🎶"], 24)}</div>
+        <div class="ball-drop"><i class="string"></i>${discoBall("big")}</div>
+        <div class="fx-text">DISCO!</div>`, 2600);
+      const hang = document.createElement("div");
+      hang.className = "disco-hang";
+      hang.setAttribute("aria-hidden", "true");
+      hang.innerHTML = `<i class="string"></i>${discoBall("")}<div class="spots">${Array.from({ length: 14 }, (_, i) =>
+        `<b style="--a:${i * 26}deg;--d:${(i % 5) * 0.4}s;--c:${["#ff5ea8", "#5ee7ff", "#ffe45e", "#9d7bff", "#5eff9a"][i % 5]}"></b>`).join("")}</div>`;
+      hang.addEventListener("click", () => { hang.remove(); document.body.classList.remove("disco"); });
+      setTimeout(() => document.body.appendChild(hang), 2300);
+      setTimeout(() => { hang.remove(); document.body.classList.remove("disco"); }, 11000);
+      vibrate([40, 40, 40, 40, 40, 40]);
     },
   };
   // Every egg also hands out its sticker.
-  const STICKER_FOR = { sixSeven: "six7", perfect: "perfect", yuck: "yuck", cheers: "cheers", opa: "opa", disco: "disco", miranda: "miranda", agree: "agree", match: "match" };
+  const STICKER_FOR = { sixSeven: "six7", perfect: "perfect", yuck: "yuck", cheers: "cheers", disco: "disco", miranda: "miranda", agree: "agree", match: "match" };
   for (const k of Object.keys(EGGS)) {
     const f = EGGS[k];
     EGGS[k] = (...a) => { f(...a); award(STICKER_FOR[k], k === "miranda"); };
@@ -229,7 +236,6 @@
     [/\bmiranda\b/, "miranda"],
     [/6\s*-?\s*7/, "sixSeven"],
     [/\b(skal|skaal|cheers|yamas|prost|salud)\b/, "cheers"],
-    [/\b(opa|ouzo)\b/, "opa"],
     [/\bdisco\b/, "disco"],
   ];
   const fired = { q: "", comment: "" };
@@ -485,7 +491,6 @@
 
   // ── Main app ───────────────────────────────────────────────
   function startApp() {
-    if (new Date().getHours() < 5) award("owl");
     state.loaded = false;
     render();
     refresh();

@@ -87,10 +87,9 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await fx(a, "cheers");
   await dismiss(a);
   await a.fill("input[name=q]", "ouzo");
-  await fx(a, "opa");
-  await a.screenshot({ path: `${OUT}/5-opa.png` });
-  await dismiss(a);
   assert.equal(await a.locator(".drink").count(), 2); // Ouzo + Ouzo Plomari
+  await a.waitForTimeout(400);
+  assert.equal(await a.locator(".fx").count(), 0, "opa egg is gone");
   await a.fill("input[name=q]", "Miranda");
   await fx(a, "miranda-fx");
   await a.screenshot({ path: `${OUT}/5b-miranda.png` });
@@ -219,13 +218,20 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   // Logo x5 → disco
   for (let i = 0; i < 5; i++) await b.click(".top h1");
   await fx(b, "disco-fx");
-  await dismiss(b);
+  await b.locator(".fx .ball.big").waitFor();
+  await b.waitForTimeout(700);
+  await b.screenshot({ path: `${OUT}/10-disco-drop.png` });
+  await b.locator(".disco-hang .ball").waitFor({ timeout: 5000 });
+  await b.waitForTimeout(900);
+  await b.screenshot({ path: `${OUT}/11-disco-hang.png` });
+  await b.click(".disco-hang");
+  await b.locator(".disco-hang").waitFor({ state: "detached" });
 
   // Jesper: own page, logout, wrong PIN, right PIN, remove rating
   await a.click('[data-tab="me"]');
   await a.getByText("Dine karakterer").waitFor();
   await a.locator(".stickers .sticker.s-miranda").waitFor();
-  assert.ok((await a.locator(".stickers .sticker:not(.locked)").count()) >= 5, "stickers collected");
+  assert.ok((await a.locator(".stickers .sticker:not(.locked)").count()) >= 4, "stickers collected");
   await a.screenshot({ path: `${OUT}/9-me.png`, fullPage: true });
   await a.click('[data-act="logout"]');
   await a.click('[data-pick="Jesper"]');
