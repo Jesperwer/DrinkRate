@@ -578,21 +578,41 @@
     return html;
   }
 
-  function ranked(cat) {
+  // Leaderboard score: the average pulled towards the family's overall average
+  // by PRIOR imaginary votes, so more votes count for more (3 × 8 beats 2 × 8,5).
+  // A drink needs MIN_VOTES votes to be ranked at all.
+  const MIN_VOTES = 2;
+  const PRIOR = 2;
+  function weighted(s) {
+    const all = state.ratings;
+    const mean = all.length ? all.reduce((a, r) => a + r.score, 0) / all.length : 7;
+    return (PRIOR * mean + s.avg * s.n) / (PRIOR + s.n);
+  }
+  function ranked(cat, withPending) {
     const { byDrink } = derived();
-    return DRINKS
+    const rows = DRINKS
       .filter((d) => cat === "all" || d.cat === cat)
       .map((d) => ({ d, s: summary(byDrink[d.id]) }))
       .filter((x) => x.s)
-      .sort((a, b) => b.s.avg - a.s.avg || b.s.n - a.s.n || a.d.name.localeCompare(b.d.name));
+      .map((x) => ({ ...x, w: weighted(x.s) }));
+    const top = rows.filter((x) => x.s.n >= MIN_VOTES)
+      .sort((a, b) => b.w - a.w || b.s.n - a.s.n || a.d.name.localeCompare(b.d.name));
+    if (!withPending) return top;
+    const pending = rows.filter((x) => x.s.n < MIN_VOTES)
+      .sort((a, b) => b.s.avg - a.s.avg || a.d.name.localeCompare(b.d.name));
+    return { top, pending };
   }
 
   function viewTop() {
     const cats = [{ id: "all", name: "Alle" }, ...CAT_ORDER.map((id) => ({ id, name: CAT[id].name, e: CAT[id].e }))];
-    const list = ranked(state.topCat);
-    let html = chips(cats, state.topCat, "topcat");
+    const { top: list, pending } = ranked(state.topCat, true);
+    let html = chips(cats, state.topCat, "topcat") +
+      `<p class="hint rank-note">Rangert etter snitt veid med antall stemmer. Minst ${MIN_VOTES} stemmer for å komme på lista.</p>`;
+    const pendingHtml = pending.length ? `<div class="section-title"><h2>⏳ Trenger flere stemmer</h2><small>${pending.length}</small></div>
+      <p class="hint" style="margin:-4px 2px 10px">Bare én har smakt disse. Én stemme til, så er de med i konkurransen.</p>
+      <div class="list">${pending.map((x) => drinkRow(x.d)).join("")}</div>` : "";
     if (!list.length) {
-      return html + `<div class="empty"><b>Ingen vurderinger her ennå</b>Gå til «Drinker» og gi karakter til det du har smakt.</div>`;
+      return html + `<div class="empty"><b>Ingen drinker med ${MIN_VOTES} stemmer ennå</b>Smak det de andre har smakt, så fylles lista opp.</div>` + pendingHtml;
     }
     const podium = list.slice(0, 3);
     const order = [podium[1], podium[0], podium[2]].filter(Boolean);
@@ -609,7 +629,7 @@
     }).join("")}</div>`;
     const rest = list.slice(3);
     if (rest.length) html += `<div class="list">${rest.map((x, i) => drinkRow(x.d, `<span class="rank">${i + 4}</span>`)).join("")}</div>`;
-    return html;
+    return html + pendingHtml;
   }
 
   function awards() {
@@ -747,6 +767,7 @@
         <button class="btn" data-act="refresh">Oppdater</button>
         <button class="btn ghost wide" data-act="logout">Logg ut</button>`, "Meny");
     }
+    if (state.sheet === "pick") return pickHtml();
     if (state.sheet.startsWith("person:")) {
       const name = state.sheet.slice(7);
       return sheetWrap(`<div class="sheet-head"><div class="sheet-title">${avatar(name, "lg")}<div><h2>${esc(name)}</h2><div class="where">Alle karakterer</div></div></div>${closeBtn}</div>
@@ -862,6 +883,7 @@
     return (h % 1000) / 1000;
   }
   const wished = (id) => store.get("wish", []).includes(id);
+  const wishCount = () => { const { byDrink } = derived(); return store.get("wish", []).filter((id) => DRINK[id] && !myRating(byDrink[id])).length; };
   function toggleWish(id) {
     const w = store.get("wish", []);
     store.set("wish", w.includes(id) ? w.filter((x) => x !== id) : [id, ...w]);
@@ -906,7 +928,8 @@
       <div class="swipe-bar">
         <button class="chip toggle ${state.aiOnly ? "on" : ""}" data-act="aionly"><em>✦</em>Kun all inclusive</button>
         <small>${all.length} igjen å sveipe</small>
-      </div>`;
+      </div>
+      ${wishCount() ? `<button class="pick-btn" data-act="pick">🎯 Hva bør jeg gå for nå?</button>` : ""}`;
     if (!cards.length) {
       html += `<div class="empty swipe-empty"><b>Du har sveipet gjennom alt! 🎉</b>Smak noe fra lista di, eller start på nytt.
         <button class="btn" data-act="resetskip">Vis de jeg sa nei til igjen</button></div>`;
@@ -961,20 +984,96 @@
     vibrate(15);
     setTimeout(() => commitSwipe(card.dataset.swipe, dir), 260);
   }
+  // After PICK_AFTER swipes (with at least one like), or PICK_LIKES likes,
+  // the app picks the one you should go for.
+  const PICK_AFTER = 10;
+  const PICK_LIKES = 4;
+  const session = { swipes: 0, likes: [] };
   function commitSwipe(id, dir) {
     const key = dir === "like" ? "wish" : "skip";
     store.set(key, [id, ...store.get(key, []).filter((x) => x !== id)]);
     lastSwipe = { id, key };
+    session.swipes++;
+    if (dir === "like") session.likes.push(id);
     render();
+    let celebrated = false;
     if (dir === "like") {
       const s = summary(derived().byDrink[id]);
-      if (s && s.avg >= 8) EGGS.match(DRINK[id], s);
+      if (s && s.avg >= 8) { EGGS.match(DRINK[id], s); celebrated = true; }
       else toast(`💚 ${DRINK[id].name} lagt til i «Vil smake»`);
     }
+    if ((session.swipes >= PICK_AFTER && session.likes.length) || session.likes.length >= PICK_LIKES) {
+      const ids = [...session.likes];
+      session.swipes = 0;
+      session.likes = [];
+      setTimeout(() => showPick(ids), celebrated ? 3100 : 450);
+    }
   }
+
+  function timeOfDay() {
+    const h = new Date().getHours();
+    if (h >= 6 && h < 11) return { key: "morning", text: "Perfekt til frokosten ☕", fits: (d) => d.cat === "coffee" || d.cat === "free" };
+    if (h >= 11 && h < 17) return { key: "day", text: "Perfekt i sola ☀️", fits: (d) => d.cat === "free" || d.cat === "beer" || /frozen|colada|spritz|hugo|mojito|daiquiri|cooler|pimm/i.test(d.name) };
+    if (h >= 17 && h < 23) return { key: "evening", text: "Perfekt til kvelden 🌅", fits: (d) => d.cat === "cocktail" || d.cat === "wine" };
+    return { key: "night", text: "En natt-drink 🌙", fits: (d) => d.cat === "spirit" || /sour|martini|russian|negroni|manhattan/i.test(d.name) };
+  }
+
+  // Best of the candidates: family verdict, included, time of day, your taste.
+  function bestPick(ids) {
+    const { byDrink } = derived();
+    const tod = timeOfDay();
+    const cats = {};
+    for (const r of personRatings(state.session.name)) (cats[DRINK[r.drink].cat] ||= []).push(r.score);
+    return ids.filter((id) => DRINK[id] && !myRating(byDrink[id]))
+      .map((id) => {
+        const d = DRINK[id];
+        const s = summary(byDrink[id]);
+        const mine = cats[d.cat] ? cats[d.cat].reduce((a, b) => a + b, 0) / cats[d.cat].length : null;
+        const score = (s ? weighted(s) : 6.5) + (d.ai.length ? 1.5 : 0) + (tod.fits(d) ? 1.5 : 0) + (mine ? (mine - 6) * 0.3 : 0) + jitter(id);
+        return { d, s, score, tod: tod.fits(d) ? tod.text : "", mine };
+      })
+      .sort((a, b) => b.score - a.score)[0];
+  }
+
+  function showPick(ids) {
+    const pick = bestPick(ids);
+    if (!pick) { toast("Sveip til høyre på noe du vil smake først 💚"); return; }
+    state.pick = { id: pick.d.id, ids };
+    openSheet("pick");
+    vibrate([30, 50, 30]);
+  }
+
+  function pickHtml() {
+    const pick = bestPick(state.pick.ids) || { d: DRINK[state.pick.id], s: summary(derived().byDrink[state.pick.id]), tod: "" };
+    const d = pick.d;
+    const why = [];
+    if (pick.s) why.push(`👨‍👩‍👧‍👦 Familien gir den ${fmt(pick.s.avg)} (${pick.s.n} ${pick.s.n === 1 ? "stemme" : "stemmer"})`);
+    else why.push("🧭 Ingen har smakt den ennå. Du blir den første!");
+    if (d.ai.length) why.push(`✦ Inkludert på ${esc(barNames(d.ai))}`);
+    else if (d.price) why.push(`💶 ${esc(d.price)}`);
+    if (pick.tod) why.push(pick.tod);
+    if (pick.mine && pick.mine >= 7.5) why.push(`😋 Du liker ${CAT[d.cat].name.toLowerCase()}`);
+    const others = state.pick.ids.filter((id) => id !== d.id && DRINK[id]).length;
+    return sheetWrap(`
+      <div class="pick">
+        <div class="pick-burst">${rain(["✨", "🎯", "💚", "⭐"], 18)}</div>
+        <p class="pick-kicker">Basert på sveipene dine</p>
+        <h2 class="pick-title">Gå for denne!</h2>
+        <div class="pick-emoji cat-${d.cat}">${drinkEmoji(d)}</div>
+        <h3 class="pick-name">${esc(d.name)}</h3>
+        ${d.desc ? `<p class="desc">${esc(d.desc)}</p>` : ""}
+        <ul class="pick-why">${why.map((w) => `<li>${w}</li>`).join("")}</ul>
+        <p class="hint">📍 ${esc(barNames(d.bars))}${others ? ` · valgt blant ${others + 1} du likte` : ""}</p>
+        <button class="btn coral" data-drink="${d.id}">⭐ Jeg har smakt den – gi karakter</button>
+        <button class="btn ghost wide" data-act="close">Fortsett å sveipe</button>
+      </div>`, "Anbefaling");
+  }
+
   function undoSwipe() {
     if (!lastSwipe) return;
     store.set(lastSwipe.key, store.get(lastSwipe.key, []).filter((x) => x !== lastSwipe.id));
+    session.swipes = Math.max(0, session.swipes - 1);
+    session.likes = session.likes.filter((x) => x !== lastSwipe.id);
     lastSwipe = null;
     render();
   }
@@ -1054,6 +1153,7 @@
       case "like": case "nope": { const c = root.querySelector(".swipe-card.is-top"); if (c) fling(c, ds.act); break; }
       case "tastenow": { const c = root.querySelector(".swipe-card.is-top"); if (c) openDrink(c.dataset.swipe); break; }
       case "undo": undoSwipe(); break;
+      case "pick": showPick(store.get("wish", [])); break;
       case "resetskip": store.set("skip", []); render(); break;
       case "aionly": state.aiOnly = !state.aiOnly; render(); break;
       case "surprise": surprise(); break;

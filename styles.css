@@ -537,3 +537,25 @@ body.quake #root { animation: quake .6s linear; }
 @media (prefers-reduced-motion: reduce) {
   *:not(.fx):not(.fx *) { animation: none !important; transition: none !important; }
 }
+.rank-note { margin: -2px 2px 12px; }
+
+/* ── Swipe pick ────────────────────────────────── */
+.pick-btn {
+  display: block; width: 100%; margin: -2px 0 14px; padding: 12px; border-radius: 16px; text-align: center;
+  font-weight: 750; color: #fff; background: linear-gradient(135deg, #22b35e, #0d7a96); box-shadow: 0 8px 20px rgba(13, 122, 150, .3);
+}
+.pick-btn:active { transform: scale(.98); }
+.pick { position: relative; text-align: center; padding-bottom: 4px; }
+.pick-burst { position: absolute; left: 50%; top: 120px; pointer-events: none; }
+.pick-burst i { position: absolute; font-style: normal; font-size: 22px; animation: conf 1.8s cubic-bezier(.15, .8, .35, 1) both; }
+.pick-kicker { margin: 0; color: var(--muted); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.pick-title {
+  font-size: 34px; margin-top: 2px;
+  background: linear-gradient(120deg, var(--coral), var(--coral2) 55%, var(--gold)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.pick-emoji { width: 120px; height: 120px; margin: 16px auto 10px; border-radius: 36px; display: grid; place-items: center; font-size: 68px; box-shadow: var(--shadow-lg); animation: pop .6s cubic-bezier(.2, 1.6, .4, 1) both; }
+.pick-name { font-size: 26px; }
+.pick .desc { margin-top: 6px; }
+.pick-why { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 6px; text-align: left; }
+.pick-why li { padding: 9px 12px; border-radius: 14px; background: var(--card2); font-size: 14.5px; font-weight: 600; }
+.pick .btn { margin-top: 12px; }
