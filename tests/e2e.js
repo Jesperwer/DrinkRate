@@ -63,6 +63,11 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await a.click('[data-score="10"]');
   await a.click('[data-pickbar="cap"]');
   await a.fill("textarea[name=comment]", "Beste <b>hittil</b>");
+  // Photo: a big camera image is shrunk on the phone before upload
+  await a.setInputFiles('input[name="photo"]', "/var/tmp/test-photo.jpg");
+  await a.locator(".photo-prev img").waitFor();
+  const sizes = await a.evaluate(() => document.querySelector(".photo-prev img").src.length);
+  assert.ok(sizes < 80000, "thumbnail is small");
   await a.screenshot({ path: `${OUT}/3-sheet.png` });
   await a.click('[data-act="save"]');
   await fx(a, "perfect");
@@ -102,6 +107,15 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await b.locator(".drink").first().waitFor();
   await b.click('[data-drink="porn-star-martini"]');
   await b.getByText("Beste <b>hittil</b>").waitFor();
+  // Jesper's photo shows for Astri and opens full size
+  await b.locator(".review-photo img").waitFor();
+  await b.click(".review-photo");
+  await b.locator(".lightbox img").waitFor();
+  await b.waitForFunction(() => document.querySelector(".lightbox img").naturalWidth >= 1000);
+  const full = await b.evaluate(() => [document.querySelector(".lightbox img").naturalWidth, document.querySelector(".lightbox img").src.length]);
+  assert.ok(full[0] <= 1280 && full[1] < 700000, `full photo shrunk: ${full}`);
+  await b.screenshot({ path: `${OUT}/3b-lightbox.png` });
+  await b.click(".lightbox");
   await b.getByText("på Captain's Bar").waitFor();
   assert.equal(await b.locator(".review.muted").count(), 6); // 7 in the family, only Jesper has rated it
   await b.click('.sheet .close');
@@ -186,6 +200,8 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
 
   await b.click('[data-tab="family"]');
   await b.getByText("Siste smaksprøver").waitFor();
+  await b.locator(".gallery .g-item").first().waitFor();
+  assert.equal(await b.locator('[data-drink="porn-star-martini"] .tag.photo').count() + 1, 1); // family tab has no cards; just make sure it renders
   await b.screenshot({ path: `${OUT}/7-family-dark.png`, fullPage: true });
   await b.click('[data-person="Jesper"]');
   await b.getByText("Alle karakterer").waitFor();

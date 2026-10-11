@@ -14,20 +14,33 @@ const FNS = {
   dr_login: ["p_name", "p_pin"],
   dr_get_ratings: ["p_token"],
   dr_rate: ["p_token", "p_drink", "p_score", "p_bar", "p_comment"],
+  dr_set_photo: ["p_token", "p_drink", "p_thumb", "p_data"],
+  dr_drink_photos: ["p_token", "p_drink"],
+  dr_photo: ["p_token", "p_drink", "p_name"],
+  dr_recent_photos: ["p_token"],
 };
 const TYPES = { mime: { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json" } };
 
+// Values go through temp files (\set name `cat file`) so big photos fit.
+let seq = 0;
 function callSql(fn, args, cb) {
   const params = FNS[fn];
-  const vars = [];
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "mock-"));
+  const sets = [];
   const call = params.map((p, i) => {
     const v = args[p];
-    vars.push("-v", `a${i}=${v === null || v === undefined ? NULL : String(v)}`);
+    const file = path.join(dir, `a${i}`);
+    fs.writeFileSync(file, v === null || v === undefined ? NULL : String(v));
+    sets.push(`\\set a${i} \`cat ${file}\``);
     const cast = { p_token: "::uuid", p_score: "::int" }[p] || "";
     return `${p} => nullif(:'a${i}', '${NULL}')${cast}`;
   });
-  const sql = `set role anon; select ${fn}(${call.join(", ")});`;
-  execFile("psql", ["-At", "-q", "-v", "ON_ERROR_STOP=1", ...vars], { env: process.env }, cb).stdin.end(sql);
+  const sql = `${sets.join("\n")}\nset role anon;\nselect ${fn}(${call.join(", ")});\n`;
+  seq++;
+  execFile("psql", ["-At", "-q", "-v", "ON_ERROR_STOP=1"], { env: process.env, maxBuffer: 64 * 1024 * 1024 }, (err, out) => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    cb(err, out);
+  }).stdin.end(sql);
 }
 
 http.createServer((req, res) => {
