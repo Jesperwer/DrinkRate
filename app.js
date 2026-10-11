@@ -508,7 +508,7 @@
       <span class="drink-main">
         <span class="drink-name">${esc(d.name)}</span>
         ${d.desc ? `<span class="drink-desc">${esc(d.desc)}</span>` : ""}
-        <span class="drink-meta">${priceTag(d)}${list ? raters(list) : `<span class="where-small">${esc(barNames(d.bars))}</span>`}</span>
+        <span class="drink-meta">${priceTag(d)}${list ? raters(list) : `<span class="where-small">${esc(barNames(d.bars))}</span>`}${list && list.some((r) => r.photo) ? `<span class="tag photo">📷 ${list.filter((r) => r.photo).length}</span>` : ""}</span>
       </span>
       <span class="score">${ring(s)}<small>${s ? `${s.n} ${s.n === 1 ? "stemme" : "stemmer"}` : "ingen ennå"}</small></span>
     </button>`;
@@ -681,6 +681,12 @@
     }
     html += `</div>`;
     const feed = [...state.ratings].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 25);
+    if (recentPhotos === null) loadRecentPhotos();
+    if (recentPhotos && recentPhotos.length) {
+      html += `<div class="section-title"><h2>📸 Bilder</h2><small>${recentPhotos.length}</small></div>
+        <div class="gallery">${recentPhotos.map((p) => `<button class="g-item" data-photo="${p.drink}" data-who="${esc(p.name)}">
+          <img alt="${esc(DRINK[p.drink].name)}" src="${p.thumb}" loading="lazy"><span>${avatar(p.name, "xs")} ${esc(DRINK[p.drink].name)}</span></button>`).join("")}</div>`;
+    }
     html += `<div class="section-title"><h2>Siste smaksprøver</h2></div>`;
     html += feed.length ? `<div class="feed">${feed.map((r) => `<button class="feed-item" data-drink="${r.drink}">
         ${avatar(r.name, "sm")}
@@ -726,6 +732,71 @@
       </div>`;
   }
 
+  // ── Photos ─────────────────────────────────────────────────
+  // Shrunk on the phone to a JPEG data URL before upload: a full image for
+  // viewing and a small thumbnail for lists.
+  async function shrink(file, max, quality) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL("image/jpeg", quality);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  async function preparePhoto(file) {
+    let data = await shrink(file, 1280, 0.78);
+    if (data.length > 650000) data = await shrink(file, 1000, 0.68);
+    if (data.length > 650000) data = await shrink(file, 800, 0.6);
+    const thumb = await shrink(file, 360, 0.7);
+    return { data, thumb };
+  }
+
+  const photoCache = {}; // drink id → [{ name, thumb, at }]
+  async function loadPhotos(id, force) {
+    const list = derived().byDrink[id] || [];
+    if (!list.some((r) => r.photo)) { photoCache[id] = []; return; }
+    if (photoCache[id] && !force) return;
+    try {
+      const res = await rpc("dr_drink_photos", { p_token: state.session.token, p_drink: id });
+      if (Array.isArray(res)) photoCache[id] = res;
+      if (state.sheet === id) render();
+    } catch { /* photos are a bonus; the rating still works */ }
+  }
+  const thumbOf = (id, name) => (photoCache[id] || []).find((p) => norm(p.name) === norm(name))?.thumb;
+
+  let recentPhotos = null;
+  async function loadRecentPhotos() {
+    try {
+      const res = await rpc("dr_recent_photos", { p_token: state.session.token });
+      if (Array.isArray(res)) {
+        recentPhotos = res.filter((p) => DRINK[p.drink]);
+        if (state.tab === "family" && !state.sheet) render();
+      }
+    } catch { /* not set up yet */ }
+  }
+
+  async function openLightbox(drink, name, thumb) {
+    document.querySelector(".lightbox")?.remove();
+    const r = (derived().byDrink[drink] || []).find((x) => norm(x.name) === norm(name));
+    const el = document.createElement("div");
+    el.className = "lightbox";
+    el.innerHTML = `<img alt="" src="${thumb || thumbOf(drink, name) || ""}">
+      <div class="lb-cap">${avatar(name, "sm")}<span><b>${esc(name)}</b> · ${esc(DRINK[drink].name)}${r ? ` · ${r.score}/10` : ""}</span></div>
+      <button class="lb-close" aria-label="Lukk">${ICONS.close}</button>`;
+    el.addEventListener("click", () => el.remove());
+    document.body.appendChild(el);
+    try {
+      const res = await rpc("dr_photo", { p_token: state.session.token, p_drink: drink, p_name: name });
+      if (res.data && el.isConnected) el.querySelector("img").src = res.data;
+    } catch { /* keep the thumbnail */ }
+  }
+
   // ── Sheet ──────────────────────────────────────────────────
   function openDrink(id) {
     const mine = myRating(derived().byDrink[id]);
@@ -741,6 +812,7 @@
     fired.comment = "";
     document.body.style.overflow = "hidden";
     render();
+    loadPhotos(id, true);
   }
   function openSheet(kind) {
     state.sheet = kind;
@@ -810,9 +882,10 @@
           <div class="chips tight">${barOpts.map((b) =>
             `<button class="chip ${state.draft.bar === b.id ? "on" : ""}" data-pickbar="${b.id}">${esc(b.name)}</button>`).join("")}</div></div>` : ""}
         <textarea class="input" name="comment" maxlength="300" placeholder="Kommentar (valgfritt)">${esc(state.draft.comment)}</textarea>
+        ${photoPicker(d)}
         <div class="row">
           ${mine ? `<button class="btn ghost" data-act="remove" ${state.saving ? "disabled" : ""}>Fjern</button>` : ""}
-          <button class="btn coral" data-act="save" ${!sc || state.saving ? "disabled" : ""}>${state.saving ? "Lagrer …" : mine ? "Oppdater" : "Lagre"}</button>
+          <button class="btn coral" data-act="save" ${!sc || state.saving || state.draft.photoBusy ? "disabled" : ""}>${state.saving ? "Lagrer …" : mine ? "Oppdater" : "Lagre"}</button>
         </div>
       </div>
 
@@ -824,10 +897,21 @@
             <div class="review-body">
               <div class="review-top"><span>${esc(name)}${isMe(name) ? " <em>(deg)</em>" : ""}${r.bar && BAR[r.bar] && d.bars.length > 1 ? ` <small>på ${esc(BAR[r.bar].name)}</small>` : ""}</span><span class="badge" style="--rc:${scoreColor(r.score)}">${r.score}</span></div>
               ${r.comment ? `<p>${esc(r.comment)}</p>` : ""}
+              ${r.photo ? (thumbOf(d.id, name) ? `<button class="review-photo" data-photo="${d.id}" data-who="${esc(name)}"><img alt="Bilde fra ${esc(name)}" src="${thumbOf(d.id, name)}"></button>` : `<span class="review-photo loading">📷</span>`) : ""}
               <small class="when">${ago(r.at)}</small>
             </div></div>`
           : `<div class="review muted">${avatar(name)}<div class="review-body"><div class="review-top"><span>${esc(name)}</span><span class="not-yet">ikke smakt</span></div></div></div>`).join("")}
       </div>`, d.name);
+  }
+
+  function photoPicker(d) {
+    const dr = state.draft;
+    const preview = dr.photo ? dr.photo.thumb : dr.photo === null ? null : thumbOf(d.id, state.session.name);
+    return `<div class="photo-pick">
+      ${preview ? `<div class="photo-prev"><img alt="Ditt bilde" src="${preview}"><button class="photo-rm" data-act="rmphoto" aria-label="Fjern bildet">${ICONS.close}</button></div>` : ""}
+      <label class="photo-btn ${dr.photoBusy ? "busy" : ""}"><input type="file" accept="image/*" name="photo" hidden>
+        ${dr.photoBusy ? "Klargjør bilde …" : preview ? "📷 Bytt bilde" : "📷 Legg til bilde"}</label>
+    </div>`;
   }
 
   async function saveRating(remove) {
@@ -842,8 +926,23 @@
       state.saving = false;
       if (res.error === "BAD_TOKEN") { logout(); return; }
       if (res.error) { render(); toast("Kunne ikke lagre. Prøv igjen."); return; }
+      const hadPhoto = !!(myRating(derived().byDrink[id]) || {}).photo;
+      let photo = !remove && (state.draft.photo === undefined ? hadPhoto : !!state.draft.photo);
+      if (!remove && state.draft.photo !== undefined) {
+        try {
+          const pr = await rpc("dr_set_photo", { p_token: state.session.token, p_drink: id, p_thumb: state.draft.photo?.thumb ?? null, p_data: state.draft.photo?.data ?? null });
+          if (pr.error) throw new Error(pr.error);
+          photoCache[id] = (photoCache[id] || []).filter((p) => !isMe(p.name));
+          if (state.draft.photo) photoCache[id].unshift({ name: state.session.name, thumb: state.draft.photo.thumb, at: new Date().toISOString() });
+          recentPhotos = null;
+        } catch {
+          photo = hadPhoto;
+          setTimeout(() => toast("Karakteren er lagret, men bildet kom ikke med. Prøv igjen."), 2700);
+        }
+      }
+      if (remove) photoCache[id] = (photoCache[id] || []).filter((p) => !isMe(p.name));
       state.ratings = state.ratings.filter((r) => !(r.drink === id && isMe(r.name)));
-      if (!remove) state.ratings = [{ drink: id, name: state.session.name, score, bar, comment: comment || null, at: new Date().toISOString() }, ...state.ratings];
+      if (!remove) state.ratings = [{ drink: id, name: state.session.name, score, bar, comment: comment || null, photo, at: new Date().toISOString() }, ...state.ratings];
       closeSheet();
       toast(remove ? "Vurdering fjernet" : `Lagret: ${score}/10 for ${d.name}`);
       const twins = remove ? [] : (derived().byDrink[id] || []).filter((r) => !isMe(r.name) && r.score === score);
@@ -1130,6 +1229,11 @@
     if (ds.topcat) { state.topCat = ds.topcat; render(); return; }
     if (ds.drink) { openDrink(ds.drink); return; }
     if (ds.person) { openSheet("person:" + ds.person); return; }
+    if (ds.photo) {
+      const thumb = (recentPhotos || []).find((p) => p.drink === ds.photo && norm(p.name) === norm(ds.who))?.thumb;
+      openLightbox(ds.photo, ds.who, thumb);
+      return;
+    }
     if (ds.score) {
       const n = Number(ds.score);
       state.draft.score = n;
@@ -1150,6 +1254,7 @@
       case "refresh": closeSheet(); refresh(); toast("Oppdatert"); break;
       case "logout": logout(); break;
       case "wish": toggleWish(state.sheet); render(); break;
+      case "rmphoto": state.draft.photo = null; render(); break;
       case "like": case "nope": { const c = root.querySelector(".swipe-card.is-top"); if (c) fling(c, ds.act); break; }
       case "tastenow": { const c = root.querySelector(".swipe-card.is-top"); if (c) openDrink(c.dataset.swipe); break; }
       case "undo": undoSwipe(); break;
@@ -1171,6 +1276,22 @@
     if (!form) return;
     e.preventDefault();
     submitLogin(form, form.dataset.form);
+  });
+
+  root.addEventListener("change", async (e) => {
+    if (e.target.name !== "photo" || !state.draft) return;
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const draft = state.draft;
+    draft.photoBusy = true;
+    render();
+    try {
+      draft.photo = await preparePhoto(file);
+    } catch {
+      toast("Klarte ikke å lese bildet. Prøv et annet.");
+    }
+    draft.photoBusy = false;
+    if (state.draft === draft) render();
   });
 
   root.addEventListener("input", (e) => {

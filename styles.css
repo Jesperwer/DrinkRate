@@ -559,3 +559,33 @@ body.quake #root { animation: quake .6s linear; }
 .pick-why { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 6px; text-align: left; }
 .pick-why li { padding: 9px 12px; border-radius: 14px; background: var(--card2); font-size: 14.5px; font-weight: 600; }
 .pick .btn { margin-top: 12px; }
+
+/* ── Photos ────────────────────────────────────── */
+.photo-pick { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.photo-btn {
+  flex: 1; display: block; padding: 12px; border-radius: 14px; text-align: center; font-weight: 700; font-size: 15px; cursor: pointer;
+  border: 1.5px dashed var(--line); background: var(--card); color: var(--ink2);
+}
+.photo-btn.busy { opacity: .6; pointer-events: none; }
+.photo-prev { position: relative; width: 74px; height: 74px; flex: none; }
+.photo-prev img { width: 100%; height: 100%; object-fit: cover; border-radius: 14px; box-shadow: var(--shadow); }
+.photo-rm { position: absolute; top: -8px; right: -8px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--bg); }
+.photo-rm svg { width: 12px; height: 12px; }
+.review-photo { display: block; margin-top: 8px; width: 120px; height: 120px; border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+.review-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.review-photo.loading { display: grid; place-items: center; background: var(--card2); font-size: 26px; animation: pulse 1.4s ease-in-out infinite; }
+.tag.photo { background: var(--card2); color: var(--ink2); }
+.gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.g-item { position: relative; aspect-ratio: 1 / 1; border-radius: 14px; overflow: hidden; background: var(--card2); box-shadow: var(--shadow); }
+.g-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.g-item span {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 5px; font-size: 10.5px; font-weight: 700; color: #fff; text-align: left;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .65)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lightbox {
+  position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  padding: 16px; background: rgba(5, 8, 12, .92); animation: fade .2s;
+}
+.lightbox img { max-width: 100%; max-height: 78vh; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); animation: pop .35s ease both; }
+.lb-cap { display: flex; align-items: center; gap: 8px; color: #fff; font-size: 15px; }
+.lb-close { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); right: 14px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .15); color: #fff; }
