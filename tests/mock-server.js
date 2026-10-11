@@ -18,6 +18,8 @@ const FNS = {
   dr_drink_photos: ["p_token", "p_drink"],
   dr_photo: ["p_token", "p_drink", "p_name"],
   dr_recent_photos: ["p_token"],
+  dr_award: ["p_token", "p_sticker"],
+  dr_get_stickers: ["p_token"],
 };
 const TYPES = { mime: { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json" } };
 

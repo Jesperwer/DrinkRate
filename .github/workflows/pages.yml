@@ -62,3 +62,11 @@ jobs:
             -H "apikey: $KEY" -H "Content-Type: application/json" -d '{"p_token":"00000000-0000-0000-0000-000000000000"}')
           echo "HTTP $CODE"; cat body.txt; echo
           if [ "$CODE" = "200" ]; then echo "Photos OK"; else echo "::warning::Photos not set up yet. Run supabase/photos.sql in the Supabase SQL Editor."; fi
+      - name: Check sticker functions (supabase/stickers.sql)
+        run: |
+          URL=$(sed -n 's/^ *url: "\(.*\)",/\1/p' site/config.js)
+          KEY=$(sed -n 's/^ *key: "\(.*\)",/\1/p' site/config.js)
+          CODE=$(curl -sS -o body.txt -w '%{http_code}' -X POST "$URL/rest/v1/rpc/dr_get_stickers" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{"p_token":"00000000-0000-0000-0000-000000000000"}')
+          echo "HTTP $CODE"; cat body.txt; echo
+          if [ "$CODE" = "200" ]; then echo "Stickers OK"; else echo "::warning::Stickers not set up yet. Run supabase/stickers.sql in the Supabase SQL Editor."; fi

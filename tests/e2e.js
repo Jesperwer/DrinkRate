@@ -200,11 +200,16 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
 
   await b.click('[data-tab="family"]');
   await b.getByText("Siste smaksprøver").waitFor();
+  await b.getByText("Flest klistremerker").waitFor();
+  await b.locator('[data-person="Jesper"] .pcard-stickers').waitFor();
   await b.locator(".gallery .g-item").first().waitFor();
   assert.equal(await b.locator('[data-drink="porn-star-martini"] .tag.photo').count() + 1, 1); // family tab has no cards; just make sure it renders
   await b.screenshot({ path: `${OUT}/7-family-dark.png`, fullPage: true });
   await b.click('[data-person="Jesper"]');
   await b.getByText("Alle karakterer").waitFor();
+  // Jesper's stickers are visible to Astri
+  await b.locator(".sheet .stickers .sticker.s-miranda").waitFor();
+  assert.ok((await b.locator(".sheet .stickers .sticker:not(.locked)").count()) >= 4, "Jesper's stickers shown");
   assert.ok((await b.locator(".sheet .drink").count()) >= 3);
   await b.screenshot({ path: `${OUT}/8-person-dark.png` });
   await b.click('.sheet .close');
