@@ -159,12 +159,30 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
     await b.waitForFunction((x) => document.querySelector(".swipe-card.is-top")?.dataset.swipe !== x, id);
   }
   await b.screenshot({ path: `${OUT}/6d-swipe-ai.png` });
+  // Manual pick from the wish list
+  await b.click('[data-act="pick"]');
+  await b.getByText("Gå for denne!").waitFor();
+  await b.screenshot({ path: `${OUT}/6e-pick.png` });
+  await b.click('.sheet .btn[data-act="close"]');
+  // Three more likes → 4 likes this session (undo took one back) → automatic pick
+  for (let i = 0; i < 3; i++) {
+    const id = await swipeTop();
+    await b.click('[data-act="like"]');
+    await b.waitForFunction((x) => document.querySelector(".swipe-card.is-top")?.dataset.swipe !== x, id);
+    if (await b.locator(".fx").count()) await dismiss(b);
+  }
+  await b.getByText("Gå for denne!").waitFor();
+  await b.click('.sheet .btn[data-act="close"]');
   await b.click('.swipe-bar [data-act="aionly"]');
 
   await b.click('[data-tab="top"]');
   await b.locator(".podium").waitFor();
-  await b.screenshot({ path: `${OUT}/6-top-dark.png` });
-  assert.equal(await b.locator(".pod.p1").getAttribute("data-drink"), "porn-star-martini");
+  await b.screenshot({ path: `${OUT}/6-top-dark.png`, fullPage: true });
+  // Needs 2 votes: Coeur de Lion (7, 7) beats Mojito (8, 1); Porn Star Martini (one 10) waits for votes
+  assert.equal(await b.locator(".pod.p1").getAttribute("data-drink"), "coeur-de-lion");
+  assert.equal(await b.locator(".podium .pod").count(), 2);
+  await b.getByText("Trenger flere stemmer").waitFor();
+  assert.equal(await b.locator('.podium [data-drink="porn-star-martini"]').count(), 0);
 
   await b.click('[data-tab="family"]');
   await b.getByText("Siste smaksprøver").waitFor();
