@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Publish site
 
 on:
   push:
@@ -6,28 +6,34 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  # Copies site/ onto the gh-pages branch, which GitHub Pages serves.
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          fetch-depth: 0
+      - name: Publish site/ to gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          SRC_SHA=$(git rev-parse --short HEAD)
+          cp -r site /tmp/site
+          git checkout gh-pages
+          git rm -rq --ignore-unmatch .
+          cp -r /tmp/site/. .
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -qm "Publish site from $SRC_SHA"
+          git push origin gh-pages
 
   # Checks that the Supabase database is set up (supabase/setup.sql has been run).
   # Reads the URL and key straight from site/config.js. Does not block the deploy.
