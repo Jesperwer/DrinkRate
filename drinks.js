@@ -1,0 +1,82 @@
+// All-inclusive drinks (marked with the red icon) from the 2026 menus.
+// One entry per drink; bars lists where it is served.
+// The id must never change once people have rated a drink.
+// cat: "cocktail" | "free" (alcohol-free) | "beerwine"
+
+window.BARS = [
+  { id: "amph", name: "Amphibion", sub: "Pool bar" },
+  { id: "spl", name: "Splash", sub: "Street edition" },
+  { id: "cap", name: "Captain's Bar", sub: "Cocktails & drinks" },
+  { id: "sea", name: "Seashells", sub: "Healthy living" },
+];
+
+window.DRINKS = [
+  // ── Cocktails ─────────────────────────────────────────
+  { id: "summer-smash", cat: "cocktail", name: "Summer Smash", desc: "Gin, green apple purée and a touch of lemon", bars: ["amph", "spl"] },
+  { id: "berry-collins", cat: "cocktail", name: "Berry Collins", desc: "Gin, red berry purée, elderflower syrup, soda water and lime", bars: ["amph", "spl", "cap"] },
+  { id: "gin-fizz", cat: "cocktail", name: "Gin Fizz", desc: "Gin, lemon squash and soda water", bars: ["amph", "spl", "cap"] },
+  { id: "espresso-martini", cat: "cocktail", name: "Espresso Martini", desc: "Vanilla vodka, coffee liqueur, hazelnut syrup, shot of espresso", bars: ["amph", "cap"] },
+  { id: "passion-cooler", cat: "cocktail", name: "Passion Cooler", desc: "Citron vodka, passion fruit purée, lime, ginger and soda water", bars: ["amph", "cap"] },
+  { id: "frozen-margarita", cat: "cocktail", name: "Frozen Margarita", desc: "Tequila, lime juice, orange liqueur", flav: "Classic, strawberry, mango or passion fruit", bars: ["amph", "cap"] },
+  { id: "whiskey-sour", cat: "cocktail", name: "Whiskey Sour", desc: "Shaken bourbon, lemon juice, foamer and a touch of sweetness", bars: ["amph", "spl", "cap"] },
+  { id: "whiskey-cobbler", cat: "cocktail", name: "Whiskey Cobbler", desc: "Bourbon, orange slice, syrup, soda water", bars: ["amph"] },
+  { id: "blue-hawaiian", cat: "cocktail", name: "Blue Hawaiian", desc: "Rum, blue curaçao, tangy pineapple and creamy coconut", bars: ["amph", "spl", "cap"] },
+  { id: "mojito", cat: "cocktail", name: "Mojito", desc: "Rum, lime juice, sugar, mint leaves and soda water", flav: "Classic, strawberry, mango or passion fruit", bars: ["amph", "spl", "cap"] },
+  { id: "pina-colada", cat: "cocktail", name: "Piña Colada", desc: "Rum, coconut cream and pineapple juice", bars: ["amph", "spl", "cap"] },
+  { id: "frozen-daiquiri", cat: "cocktail", name: "Frozen Daiquiri", desc: "Rum, lime juice, simple syrup", flav: "Classic, strawberry, mango or passion fruit", bars: ["amph", "cap"] },
+  { id: "aperol-spritz", cat: "cocktail", name: "Aperol Spritz", desc: "Aperol, sparkling wine, a splash of soda and an orange slice", bars: ["amph", "spl", "cap"] },
+  { id: "hugo", cat: "cocktail", name: "Hugo", desc: "Sparkling wine, elderflower syrup, soda water, lime and fresh mint", bars: ["amph", "spl", "cap"] },
+  { id: "pimms-cup", cat: "cocktail", name: "Pimm's Cup", desc: "Pimm's No.1, ginger beer, a medley of fruits and fresh mint", bars: ["amph", "spl"] },
+  { id: "amaretto-sour", cat: "cocktail", name: "Amaretto Sour", desc: "Amaretto, fresh lemon juice, foamer and sugar syrup", bars: ["amph", "spl", "cap"] },
+  { id: "brandy-sour", cat: "cocktail", name: "Brandy Sour", desc: "The Cyprus classic. Brandy, angostura bitters, lemon squash and soda", bars: ["amph", "spl", "cap"] },
+  { id: "margarita", cat: "cocktail", name: "Margarita", desc: "Tequila, lime juice, orange liqueur", flav: "Classic, strawberry, mango or passion fruit", bars: ["spl"] },
+  { id: "sweet-peach", cat: "cocktail", name: "Sweet Peach", desc: "Whiskey, peach schnapps, peach purée, lemon juice and sugar syrup", bars: ["spl"] },
+  { id: "captains-colada", cat: "cocktail", name: "Captain's Colada", desc: "Spiced rum, coconut, hazelnut and pineapple", bars: ["cap"] },
+  { id: "spicy-rita", cat: "cocktail", name: "Spicy Rita", desc: "Tequila, lime juice, orgeat, chili syrup", bars: ["cap"] },
+  { id: "gin-basil-smash", cat: "cocktail", name: "Gin Basil Smash", desc: "Gin, basil, green apple and lemon juice", bars: ["cap"] },
+  { id: "paloma", cat: "cocktail", name: "Paloma", desc: "Tequila, lime, agave, pink grapefruit soda", bars: ["cap"] },
+  { id: "fizzy-colada", cat: "cocktail", name: "Fizzy Colada", desc: "Rum, lime, coconut, pineapple soda", bars: ["cap"] },
+  { id: "captain-zombie", cat: "cocktail", name: "Captain Zombie", desc: "Rum, passion fruit, orange, falernum, bitters", bars: ["cap"] },
+  { id: "vanilla-43", cat: "cocktail", name: "Vanilla 43", desc: "Licor 43, fresh lemon, sugar", bars: ["cap"] },
+  { id: "tom-collins", cat: "cocktail", name: "Tom Collins", desc: "Gin, lemon, sugar and soda water", bars: ["cap"] },
+  { id: "singapore-sling", cat: "cocktail", name: "Singapore Sling", desc: "Gin, cherry liqueur, pineapple and lime", bars: ["cap"] },
+  { id: "grasshopper", cat: "cocktail", name: "Grasshopper", desc: "Crème de menthe, crème de cacao and cream", bars: ["cap"] },
+  { id: "harvey-wallbanger", cat: "cocktail", name: "Harvey Wallbanger", desc: "Vodka, orange juice and Galliano", bars: ["cap"] },
+  { id: "white-russian", cat: "cocktail", name: "White Russian", desc: "Vodka, coffee liqueur and cream", bars: ["cap"] },
+  { id: "sex-on-the-beach", cat: "cocktail", name: "Sex on the Beach", desc: "Vodka, peach schnapps, orange and cranberry", bars: ["cap"] },
+  { id: "tequila-sunrise", cat: "cocktail", name: "Tequila Sunrise", desc: "Tequila, orange juice and grenadine", bars: ["cap"] },
+  { id: "manhattan", cat: "cocktail", name: "Manhattan", desc: "Whiskey, sweet vermouth and bitters", bars: ["cap"] },
+  { id: "cosmopolitan", cat: "cocktail", name: "Cosmopolitan", desc: "Vodka, triple sec, cranberry and lime", bars: ["cap"] },
+  { id: "bloody-mary", cat: "cocktail", name: "Bloody Mary", desc: "Vodka, tomato juice and spices", bars: ["cap"] },
+  { id: "rose-and-berries", cat: "cocktail", name: "Rose and Berries", desc: "Gin, rose water, raspberries, agave syrup, lemon juice", bars: ["sea"] },
+  { id: "agave-gin-fizz", cat: "cocktail", name: "Agave Gin Fizz", desc: "Gin, agave syrup, lemon juice, club soda and orange bitters", bars: ["sea"] },
+  { id: "orange-kick", cat: "cocktail", name: "Orange Kick", desc: "Whiskey, orange juice, lemon juice, agave syrup", bars: ["sea"] },
+  { id: "berry-crush", cat: "cocktail", name: "Berry Crush", desc: "Tequila, crushed mixed berries, agave syrup, lemon juice", bars: ["sea"] },
+  { id: "rum-sour", cat: "cocktail", name: "Rum Sour", desc: "White rum, agave syrup, lemon juice and orange bitters", bars: ["sea"] },
+  { id: "vegan-aperol-spritz", cat: "cocktail", name: "Vegan Aperol Spritz", desc: "White wine, soda, Aperol and a slice of orange", bars: ["sea"] },
+
+  // ── Alcohol-free ──────────────────────────────────────
+  { id: "shy-colada", cat: "free", name: "Shy Colada", desc: "Pineapple juice, coconut syrup", flav: "Classic, strawberry or mango", bars: ["amph", "spl"] },
+  { id: "virgin-mojito", cat: "free", name: "Virgin Mojito", desc: "Lime, mint, sugar and soda water", flav: "Classic or strawberry", bars: ["amph", "spl", "cap"] },
+  { id: "blackcurrant-spritzer", cat: "free", name: "Blackcurrant Spritzer", desc: "Blackcurrant cordial and 7up", bars: ["amph", "spl"] },
+  { id: "milkshake", cat: "free", name: "Milkshake", desc: "Vanilla, strawberry or chocolate", bars: ["amph", "spl", "cap"] },
+  { id: "slush-puppy", cat: "free", name: "Slush Puppy", desc: "Ice-cold slush", bars: ["amph", "spl"] },
+  { id: "virgin-pina-colada", cat: "free", name: "Virgin Piña Colada", desc: "Pineapple, coconut purée", bars: ["cap"] },
+  { id: "paloma-fizz", cat: "free", name: "Paloma Fizz", desc: "Grapefruit juice, lime, agave and rosemary", bars: ["cap"] },
+  { id: "caribbean-breeze", cat: "free", name: "Caribbean Breeze", desc: "Smoothie. Coconut, strawberry, pineapple, coconut milk, agave", bars: ["sea"] },
+  { id: "mighty-green", cat: "free", name: "Mighty Green", desc: "Smoothie. Avocado, pear, kiwi, mint, apple and coconut water", bars: ["sea"] },
+  { id: "seashell-twist", cat: "free", name: "Seashell Twist", desc: "Smoothie. Ginger, apple, spinach, carrot, lemon and apple juice", bars: ["sea"] },
+
+  // ── Beer & wine ───────────────────────────────────────
+  { id: "local-draught-beer", cat: "beerwine", name: "Local draught beer", desc: "Keo or Carlsberg on tap, 25 or 50 cl", bars: ["amph", "spl", "cap", "sea"] },
+  { id: "sparkling-wine", cat: "beerwine", name: "Sparkling wine", desc: "By the glass", bars: ["amph", "spl"] },
+  { id: "pinot-grigio", cat: "beerwine", name: "Pinot Grigio", desc: "White wine by the glass", bars: ["amph"] },
+  { id: "merlot", cat: "beerwine", name: "Merlot", desc: "Red wine by the glass", bars: ["amph"] },
+  { id: "house-wine", cat: "beerwine", name: "House wine", desc: "Red, white or rosé", bars: ["spl"] },
+  { id: "carlsberg-zero", cat: "beerwine", name: "Carlsberg 0.0%", desc: "Alcohol-free beer", bars: ["cap"] },
+  { id: "ktima-keo", cat: "beerwine", name: "Ktima Keo", desc: "White. Xynisteri and Chardonnay, Limassol, Cyprus", bars: ["cap"] },
+  { id: "coeur-de-lion", cat: "beerwine", name: "Coeur de Lion", desc: "Dry rosé, Keo winery, Cyprus", bars: ["cap", "sea"] },
+  { id: "othello-cellar", cat: "beerwine", name: "Othello Cellar", desc: "Red. Maratheftiko, Shiraz and Cabernet, Cyprus", bars: ["cap"] },
+  { id: "ezousa-xynisteri", cat: "beerwine", name: "Ezousa Xynisteri", desc: "White wine", bars: ["sea"] },
+  { id: "ezousa-maratheftiko", cat: "beerwine", name: "Ezousa Maratheftiko", desc: "Red. Maratheftiko, Lefkada, Mourvèdre", bars: ["sea"] },
+];
