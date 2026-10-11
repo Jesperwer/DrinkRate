@@ -28,3 +28,23 @@ jobs:
           path: site
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Checks that the Supabase database is set up (supabase/setup.sql has been run).
+  # Reads the URL and key straight from site/config.js. Does not block the deploy.
+  database-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Call dr_list_users
+        run: |
+          URL=$(sed -n 's/^ *url: "\(.*\)",/\1/p' site/config.js)
+          KEY=$(sed -n 's/^ *key: "\(.*\)",/\1/p' site/config.js)
+          echo "Project: $URL"
+          CODE=$(curl -sS -o body.txt -w '%{http_code}' -X POST "$URL/rest/v1/rpc/dr_list_users" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}')
+          echo "HTTP $CODE"; cat body.txt; echo
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Database is not set up yet. Run supabase/setup.sql in the Supabase SQL Editor."
+            exit 1
+          fi
+          echo "Database OK"
