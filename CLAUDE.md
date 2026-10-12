@@ -12,5 +12,6 @@ Prosjektet ligger i Second Brain med slug `drinkrate`.
 - Endre aldri `id` på en drink i `site/drinks.js`; karakterene i databasen er knyttet til den.
 - Databaseendringer er additive SQL-filer i `supabase/` som Jesper limer inn i Supabase SQL Editor.
 - Øk `?v=N` i `site/index.html` når filer i `site/` endres.
-- Kjør ende-til-ende-testen før push: lokal Postgres med `supabase/*.sql`, `node tests/mock-server.js`, så `node tests/e2e.js <mappe>`.
+- Kjør `npm test` før push (lokal Postgres, se README). Workflowen publiserer bare når testene er grønne.
+- Kjøres `supabase/setup.sql` på nytt, må `photos.sql`, `stickers.sql` og `security_holiday.sql` kjøres etterpå.
 - Svar Jesper på norsk, kort og mobilvennlig.
