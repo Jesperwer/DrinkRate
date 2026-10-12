@@ -7,6 +7,12 @@
   const DRINKS = window.DRINKS;
   const BAR = Object.fromEntries(BARS.map((b) => [b.id, b]));
   const DRINK = Object.fromEntries(DRINKS.map((d) => [d.id, d]));
+  const INS = window.DR_INSIGHTS;
+  const QZ = window.DR_QUIZ;
+  // Holiday features are off unless switched on in config.js.
+  const on = (f) => !!(CFG.features && CFG.features[f]);
+  const BDAY = CFG.birthday || null;
+  const known = (id) => !!DRINK[id];
   const CAT = {
     cocktail: { name: "Cocktails", e: "🍹" },
     free: { name: "Alkoholfritt", e: "🥤" },
@@ -136,18 +142,26 @@
     set(k, v) { try { localStorage.setItem(this.key(k), JSON.stringify(v)); } catch { /* private mode */ } },
   };
 
+  // hint: shown when you tap a sticker you have not found yet.
   const STICKERS = [
-    { id: "miranda", e: "👑", name: "Miranda" },
-    { id: "six7", e: "🫴", name: "6-7" },
-    { id: "perfect", e: "💯", name: "Perfekt 10" },
-    { id: "yuck", e: "🤢", name: "Uff" },
-    { id: "agree", e: "🙌", name: "Enige" },
-    { id: "match", e: "💘", name: "Match" },
-    { id: "cheers", e: "🥂", name: "Skål" },
-    { id: "disco", e: "🪩", name: "Disco" },
+    { id: "miranda", e: "👑", name: "Miranda", hint: "Et visst navn gjør magi i søkefeltet." },
+    { id: "six7", e: "🫴", name: "6-7", hint: "To tall som etter hverandre gjør ungdommen gal." },
+    { id: "perfect", e: "💯", name: "Perfekt 10", hint: "Gi en drink den aller høyeste karakteren." },
+    { id: "yuck", e: "🤢", name: "Uff", hint: "Gi en drink den aller laveste karakteren." },
+    { id: "agree", e: "🙌", name: "Enige", hint: "Gi en drink samme karakter som noen andre i familien." },
+    { id: "match", e: "💘", name: "Match", hint: "Sveip til høyre på noe familien elsker." },
+    { id: "cheers", e: "🥂", name: "Skål", hint: "Si skål – i søkefeltet." },
+    { id: "disco", e: "🪩", name: "Disco", hint: "Tittelen øverst tåler mer enn ett trykk …" },
   ];
+  // Anne's birthday sticker stays in the book after the day, so earned ones keep showing.
+  if (BDAY && BDAY.id) {
+    const [y, m, d] = BDAY.date.split("-").map(Number);
+    const day = `${d}. ${["januar", "februar", "mars", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "desember"][m - 1]} ${y}`;
+    STICKERS.push({ id: BDAY.id, e: "🎂", name: `${BDAY.name} ${y}`, bday: true,
+      hint: () => (INS.dateIn(BDAY.tz) > BDAY.date ? `Ble delt ut på ${BDAY.name}s bursdag ${day}.` : `Kommer på ${BDAY.name}s bursdag ${day}. Se etter banneret!`) });
+  }
   function award(id, quiet) {
-    if (!state.session) return;
+    if (!state.session || !STICKERS.some((st) => st.id === id)) return;
     const have = store.get("stickers", []);
     if (have.includes(id)) return;
     store.set("stickers", [...have, id]);
@@ -225,9 +239,14 @@
       setTimeout(() => { hang.remove(); document.body.classList.remove("disco"); }, 11000);
       vibrate([40, 40, 40, 40, 40, 40]);
     },
+    birthday() {
+      showFx("bday-fx", `<div class="fx-burst">${rain(["🎉", "🎂", "🎈", "✨", "🥳"], 34)}</div>
+        <div class="fx-big">🎂</div><div class="fx-text">GRATULERER!</div><div class="fx-sub">${esc(BDAY.name)} har bursdag i dag</div>`, 3000);
+      vibrate([40, 40, 120]);
+    },
   };
   // Every egg also hands out its sticker.
-  const STICKER_FOR = { sixSeven: "six7", perfect: "perfect", yuck: "yuck", cheers: "cheers", disco: "disco", miranda: "miranda", agree: "agree", match: "match" };
+  const STICKER_FOR = { sixSeven: "six7", perfect: "perfect", yuck: "yuck", cheers: "cheers", disco: "disco", miranda: "miranda", agree: "agree", match: "match", birthday: BDAY && BDAY.id };
   for (const k of Object.keys(EGGS)) {
     const f = EGGS[k];
     EGGS[k] = (...a) => { f(...a); award(STICKER_FOR[k], k === "miranda"); };
@@ -255,7 +274,11 @@
     NAME_TAKEN: "Du har allerede en PIN-kode. Logg inn med den.",
     LOCKED: "For mange forsøk. Vent 5 minutter og prøv igjen.",
     NETWORK: "Får ikke kontakt. Sjekk nettet og prøv igjen.",
+    REGISTRATION_CLOSED: "Nye brukere er stengt. Ta kontakt med Jesper.",
   };
+  // Only reads are retried automatically. A write that timed out may still
+  // have reached the database, so saveRating checks before sending again.
+  const READS = new Set(["dr_list_users", "dr_get_ratings", "dr_get_stickers", "dr_drink_photos", "dr_photo", "dr_recent_photos"]);
 
   async function rpc(fn, args, attempt = 0) {
     const headers = { "Content-Type": "application/json", apikey: CFG.key };
@@ -269,7 +292,7 @@
       if (!res.ok) throw new Error("HTTP " + res.status);
       return await res.json();
     } catch (e) {
-      if (attempt < 1) return rpc(fn, args, attempt + 1);
+      if (attempt < 1 && READS.has(fn)) return rpc(fn, args, attempt + 1);
       const err = new Error("NETWORK");
       err.cause = e;
       throw err;
@@ -291,9 +314,16 @@
     q: "",
     topCat: "all",
     sheet: null, // drink id | "menu" | "person:<name>"
-    draft: null, // { score, bar, comment }
+    draft: null, // { score, bar, comment, photo, ... } for the open drink
     saving: false,
+    loadError: false, // the first load failed: show "try again", not an empty family
+    lastSync: null, // time of the last successful load
+    stale: false, // a later reload failed; showing data from lastSync
+    quiz: null, // the running quiz round
   };
+  // True while `token` is still the logged-in session, so answers that arrive
+  // after logging out or switching person are dropped.
+  const current = (token) => !!state.session && state.session.token === token;
 
   function loadSession() {
     try { return JSON.parse(localStorage.getItem(LS_KEY)) || null; } catch { return null; }
@@ -308,9 +338,10 @@
   let serverStickers = {};
   let stickersShared = false;
   async function loadStickers() {
+    const token = state.session.token;
     try {
-      const res = await rpc("dr_get_stickers", { p_token: state.session.token });
-      if (!Array.isArray(res)) return;
+      const res = await rpc("dr_get_stickers", { p_token: token });
+      if (!Array.isArray(res) || !current(token)) return;
       const map = {};
       for (const x of res) (map[norm(x.name)] ||= new Set()).add(x.sticker);
       serverStickers = map;
@@ -352,17 +383,24 @@
 
   async function refresh() {
     if (!state.session) return;
+    const token = state.session.token;
     try {
-      const [data] = await Promise.all([rpc("dr_get_ratings", { p_token: state.session.token }), loadStickers()]);
+      const [data] = await Promise.all([rpc("dr_get_ratings", { p_token: token }), loadStickers()]);
+      if (!current(token)) return;
       if (data.error === "BAD_TOKEN") { logout(); return; }
-      state.ratings = (data.ratings || []).filter((r) => DRINK[r.drink]);
+      if (!Array.isArray(data.ratings)) throw new Error(data.error || "BAD_ANSWER");
+      state.ratings = data.ratings.filter((r) => DRINK[r.drink]);
       if (data.me && data.me !== state.session.name) saveSession({ ...state.session, name: data.me });
-      const wasLoaded = state.loaded;
-      state.loaded = true;
-      if (wasLoaded && document.activeElement?.name === "q") updateResults();
-      else render();
+      const wasLoaded = state.loaded && !state.loadError;
+      Object.assign(state, { loaded: true, loadError: false, stale: false, lastSync: new Date() });
+      // Do not rebuild the page under someone who is typing.
+      const typing = document.activeElement?.name;
+      if (wasLoaded && typing === "q") updateResults();
+      else if (!(wasLoaded && typing === "comment")) render();
     } catch {
-      if (!state.loaded) { state.loaded = true; render(); }
+      if (!current(token)) return;
+      if (!state.loaded || state.loadError) { Object.assign(state, { loaded: true, loadError: true }); render(); return; }
+      if (!state.stale) { state.stale = true; if (!state.sheet) render(); }
       toast(ERR.NETWORK);
     }
   }
@@ -370,10 +408,20 @@
   function logout() {
     saveSession(null);
     state.ratings = [];
-    state.loaded = false;
     state.sheet = null;
+    state.draft = null;
+    state.saving = false;
+    // Nothing from this person may show for the next one on this phone.
+    for (const k of Object.keys(photoCache)) delete photoCache[k];
+    recentPhotos = null;
+    serverStickers = {};
+    stickersShared = false;
+    stickersAt = 0;
+    lastSwipe = null;
+    Object.assign(session, { swipes: 0, likes: [] });
     document.body.style.overflow = "";
-    Object.assign(state, { tab: "list", bar: "all", cat: "all", aiOnly: false, q: "", topCat: "all" });
+    Object.assign(state, { tab: "list", bar: "all", cat: "all", aiOnly: false, q: "", topCat: "all",
+      loaded: false, loadError: false, stale: false, lastSync: null, quiz: null, pick: null });
     renderLogin();
   }
 
@@ -502,6 +550,8 @@
     const sheetScroll = root.querySelector(".sheet")?.scrollTop || 0;
     let content;
     if (!state.loaded) content = `<div class="loading"><span class="spin">🍹</span>Henter vurderinger …</div>`;
+    else if (state.loadError) content = `<div class="empty load-error"><b>Får ikke hentet vurderingene</b>Sjekk nettet. Ingenting er borte – det er bare ikke lastet inn ennå.
+      <button class="btn" data-act="reload">Prøv igjen</button></div>`;
     else if (state.tab === "list") content = viewList();
     else if (state.tab === "swipe") content = viewSwipe();
     else if (state.tab === "top") content = viewTop();
@@ -514,7 +564,7 @@
         <h1 data-act="logo">${state.tab === "list" ? "DrinkRate" : title}</h1>
         <button class="me-btn" data-act="menu" aria-label="Meny">${avatar(state.session.name)}</button>
       </div></header>
-      <main class="wrap tab-${state.tab}">${content}</main>
+      <main class="wrap tab-${state.tab}">${state.stale && state.loaded && !state.loadError ? staleNote() : ""}${content}</main>
       <nav class="nav"><div class="nav-in">
         ${TABS.map(([id, label]) =>
           `<button class="tab ${state.tab === id ? "on" : ""}" data-tab="${id}">${ICONS[id]}<span>${label}</span></button>`).join("")}
@@ -526,9 +576,14 @@
     if (sheet) {
       if (state.sheetOpened) state.sheetOpened = false;
       else { sheet.classList.add("still"); root.querySelector(".backdrop").classList.add("still"); sheet.scrollTop = sheetScroll; }
+      // Bring news inside the sheet (the reveal, a photo that still needs sending) into view.
+      if (state.scrollTo) { sheet.querySelector(state.scrollTo)?.scrollIntoView({ block: "center" }); state.scrollTo = null; }
     }
     onScroll();
   }
+
+  const clock = (d) => d.toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" });
+  const staleNote = () => `<button class="stale" data-act="reload">⚠️ Ikke oppdatert siden kl. ${clock(state.lastSync)}. Trykk for å prøve igjen.</button>`;
 
   function chips(items, active, attr, extraCls = "") {
     return `<div class="chips ${extraCls}">${items.map((it) =>
@@ -597,9 +652,24 @@
     </section>`;
   }
 
+  // Only on the birthday itself (date in BDAY.tz). The confetti starts when you tap.
+  function birthdayBanner() {
+    if (!on("birthday") || !BDAY || !INS.isEventDay(BDAY)) return "";
+    const st = STICKERS.find((x) => x.id === BDAY.id);
+    const hers = isMe(BDAY.name);
+    const got = stickersOf(state.session.name).includes(BDAY.id);
+    return `<section class="bday">
+      <span class="bday-cake" aria-hidden="true">🎂</span>
+      <div class="bday-main"><b>Gratulerer med dagen, ${esc(BDAY.name)}!</b>
+        <p>${hers ? "Hele familien skåler for deg i dag 🥂" : `${esc(BDAY.name)} har bursdag i dag. Trykk for konfetti og bursdagsklistremerket.`}</p>
+        ${got ? `<small>${st.e} ${esc(st.name)}-klistremerket er ditt</small>` : ""}</div>
+      <button class="bday-btn" data-act="bday">🎉 ${hers ? "Feir!" : "Gratulerer!"}</button>
+    </section>`;
+  }
+
   function viewList() {
     const cats = [{ id: "all", name: "Alle" }, ...CAT_ORDER.map((id) => ({ id, name: CAT[id].name, e: CAT[id].e }))];
-    return `${hero()}
+    return `${birthdayBanner()}${hero()}
       <div class="search">${ICONS.search}<input class="input" name="q" type="search" placeholder="Søk blant ${DRINKS.length} drinker" value="${esc(state.q)}" autocomplete="off" enterkeyhint="search"></div>
       ${chips(cats, state.cat, "cat")}
       <div class="chips">
@@ -723,6 +793,8 @@
         ${a.drink ? `<b>${esc(a.drink.name)}</b>` : `<b>${avatar(a.name, "xs")} ${esc(a.name)}</b>`}
         <small>${a.v}</small></div>`).join("")}</div>`;
     }
+    html += controversySection();
+    if (on("quiz")) html += `<button class="game-btn" data-act="quiz"><span>🎲</span><span><b>Familiespill</b><small>Hvem skrev det? · Gjett karakteren</small></span></button>`;
     html += `<div class="section-title"><h2>Smakerne</h2><small>Trykk for å se alt</small></div><div class="people-list">`;
     for (const name of people()) {
       const rs = personRatings(name);
@@ -754,6 +826,48 @@
     return html;
   }
 
+  // Up to three drinks the family disagrees most about.
+  function controversySection() {
+    if (!on("controversy")) return "";
+    const rows = INS.controversial(state.ratings, { known }).slice(0, 3);
+    const title = `<div class="section-title"><h2>🔥 Mest omdiskutert</h2><small>størst sprik</small></div>`;
+    if (!rows.length) return title + `<div class="empty small"><b>Ingen store sprik i vurderingene ennå.</b>Når minst tre har smakt samme drink og er uenige, dukker den opp her.</div>`;
+    return title + `<div class="hot">${rows.map((x) => {
+      const d = DRINK[x.drink];
+      return `<button class="hot-card" data-drink="${d.id}">
+        <span class="hot-head"><span class="emoji cat-${d.cat}">${drinkEmoji(d)}</span><b>${esc(d.name)}</b>${x.shared ? `<em>delt ${x.place}. plass</em>` : ""}</span>
+        <span class="hot-range"><b style="color:${scoreColor(x.min)}">${x.min}</b> til <b style="color:${scoreColor(x.max)}">${x.max}</b><small>sprik ${x.spread} · ${x.n} personer</small></span>
+        <span class="hot-votes">${x.votes.map((v) => `<span class="hv">${avatar(v.name, "xs")}${esc(v.name)} <b>${v.score}</b></span>`).join("")}</span>
+      </button>`;
+    }).join("")}</div>`;
+  }
+
+  function twinsSection() {
+    if (!on("twins")) return "";
+    const { twins } = INS.twins(state.ratings, state.session.name, { known });
+    const title = `<div class="section-title"><h2>👯 Smakstvillinger</h2><small>minst forskjell = mest lik</small></div>`;
+    if (!twins.length) return title + `<div class="empty small"><b>For få felles vurderinger ennå</b>Du må ha minst 3 drinker felles med noen før dere kan sammenlignes.</div>`;
+    const best = twins.filter((t) => t.place === 1);
+    return title + `<p class="twin-best">${best.length > 1 ? "Dine smakstvillinger er" : "Din smakstvilling er"} <b>${best.map((t) => esc(t.name)).join(" og ")}</b></p>
+      <div class="twins">${twins.map((t) => `<button class="twin-row" data-twin="${esc(t.name)}">${avatar(t.name, "sm")}
+        <span class="twin-main"><b>Du og ${esc(t.name)}</b><small>skiller i snitt ${fmt(t.dist)} poeng på ${t.common} felles drinker</small></span>
+        <span class="twin-dist">${fmt(t.dist)}</span></button>`).join("")}</div>`;
+  }
+
+  function twinHtml(name) {
+    const t = INS.twins(state.ratings, state.session.name, { known }).twins.find((x) => norm(x.name) === norm(name));
+    const head = `<div class="sheet-head"><div class="sheet-title">${avatar(name, "lg")}<div><h2>Du og ${esc(name)}</h2>
+      <div class="where">${t ? `skiller i snitt ${fmt(t.dist)} poeng på ${t.common} felles drinker` : "For få felles vurderinger ennå"}</div></div></div>${closeBtn}</div>`;
+    if (!t) return sheetWrap(head, name);
+    return sheetWrap(head + `<div class="list twin-list">${t.drinks.map((x) => {
+      const d = DRINK[x.drink];
+      return `<button class="drink compact" data-drink="${d.id}"><span class="emoji cat-${d.cat}">${drinkEmoji(d)}</span>
+        <span class="drink-main"><span class="drink-name">${esc(d.name)}</span><span class="drink-desc">${x.mine === x.theirs ? "Helt enige 🙌" : `${Math.abs(x.mine - x.theirs)} poeng forskjell`}</span></span>
+        <span class="twin-pair"><span class="badge" style="--rc:${scoreColor(x.mine)}" title="Du">${x.mine}</span><span class="badge" style="--rc:${scoreColor(x.theirs)}" title="${esc(name)}">${x.theirs}</span></span>
+      </button>`;
+    }).join("")}</div><p class="hint center">Du til venstre, ${esc(name)} til høyre.</p>`, name);
+  }
+
   function personBody(name) {
     const rs = [...personRatings(name)].sort((a, b) => b.score - a.score || String(b.at).localeCompare(String(a.at)));
     const avg = rs.length ? rs.reduce((s, r) => s + r.score, 0) / rs.length : 0;
@@ -779,6 +893,8 @@
   function viewMe() {
     return `<div class="me-head">${avatar(state.session.name, "xl")}<div><h2>${esc(state.session.name)}</h2><p class="hint">Din side</p></div></div>
       ${stickerBook()}
+      ${on("postcard") ? `<button class="game-btn" data-act="postcard"><span>💌</span><span><b>Feriepostkort</b><small>Et minne fra turen – hittil</small></span></button>` : ""}
+      ${twinsSection()}
       ${wishSection()}
       <div class="section-title"><h2>Dine karakterer</h2></div>
       ${personBody(state.session.name)}
@@ -819,8 +935,10 @@
     const list = derived().byDrink[id] || [];
     if (!list.some((r) => r.photo)) { photoCache[id] = []; return; }
     if (photoCache[id] && !force) return;
+    const token = state.session.token;
     try {
-      const res = await rpc("dr_drink_photos", { p_token: state.session.token, p_drink: id });
+      const res = await rpc("dr_drink_photos", { p_token: token, p_drink: id });
+      if (!current(token)) return;
       if (Array.isArray(res)) photoCache[id] = res;
       if (state.sheet === id) render();
     } catch { /* photos are a bonus; the rating still works */ }
@@ -828,14 +946,19 @@
   const thumbOf = (id, name) => (photoCache[id] || []).find((p) => norm(p.name) === norm(name))?.thumb;
 
   let recentPhotos = null;
+  let recentLoading = false;
   async function loadRecentPhotos() {
+    if (recentLoading) return;
+    recentLoading = true;
+    const token = state.session.token;
     try {
-      const res = await rpc("dr_recent_photos", { p_token: state.session.token });
-      if (Array.isArray(res)) {
+      const res = await rpc("dr_recent_photos", { p_token: token });
+      if (Array.isArray(res) && current(token)) {
         recentPhotos = res.filter((p) => DRINK[p.drink]);
-        if (state.tab === "family" && !state.sheet) render();
+        if ((state.tab === "family" && !state.sheet) || state.sheet === "postcard") render();
       }
     } catch { /* not set up yet */ }
+    recentLoading = false;
   }
 
   async function openLightbox(drink, name, thumb) {
@@ -860,10 +983,14 @@
     const d = DRINK[id];
     state.sheet = id;
     state.sheetOpened = true;
+    const kept = keptDraft(id);
     state.draft = {
-      score: mine?.score || 0,
-      bar: mine ? mine.bar || "" : (state.bar !== "all" && d.bars.includes(state.bar) ? state.bar : ""),
-      comment: mine?.comment || "",
+      score: kept ? kept.score : mine?.score || 0,
+      bar: kept ? kept.bar : mine ? mine.bar || "" : (state.bar !== "all" && d.bars.includes(state.bar) ? state.bar : ""),
+      comment: kept ? kept.comment : mine?.comment || "",
+      restored: !!kept,
+      // "Rate first": hide the family's scores until your own is saved.
+      blind: on("blindRating") && !mine && store.get("blind", false),
     };
     lastTaps = [];
     fired.comment = "";
@@ -878,6 +1005,7 @@
     render();
   }
   function closeSheet() {
+    if (state.sheet === "quiz") state.quiz = null;
     state.sheet = null;
     state.draft = null;
     document.body.style.overflow = "";
@@ -893,10 +1021,14 @@
     if (state.sheet === "menu") {
       return sheetWrap(`<div class="sheet-head"><div class="sheet-title">${avatar(state.session.name, "lg")}<h2>${esc(state.session.name)}</h2></div>${closeBtn}</div>
         <p class="hint">Tips: Legg siden til på hjemskjermen (Del → «Legg til på Hjem-skjerm»), så åpner den som en app.</p>
+        ${state.lastSync ? `<p class="hint">Sist oppdatert kl. ${clock(state.lastSync)}</p>` : ""}
         <button class="btn" data-act="refresh">Oppdater</button>
         <button class="btn ghost wide" data-act="logout">Logg ut</button>`, "Meny");
     }
     if (state.sheet === "pick") return pickHtml();
+    if (state.sheet === "quiz") return quizHtml();
+    if (state.sheet === "postcard") return postcardHtml();
+    if (state.sheet.startsWith("twin:")) return twinHtml(state.sheet.slice(5));
     if (state.sheet.startsWith("person:")) {
       const name = state.sheet.slice(7);
       return sheetWrap(`<div class="sheet-head"><div class="sheet-title">${avatar(name, "lg")}<div><h2>${esc(name)}</h2><div class="where">Alle karakterer</div></div></div>${closeBtn}</div>
@@ -931,6 +1063,8 @@
       <p class="ai-line">${aiText}</p>
 
       <div class="rate-box">
+        ${state.draft.restored ? `<p class="draft-note">↩️ Ulagret kladd hentet tilbake</p>` : ""}
+        ${on("blindRating") && (!mine || state.draft.blind) && !state.draft.revealed ? `<button class="chip toggle blind-toggle ${state.draft.blind ? "on" : ""}" data-act="blind"><em>🙈</em>Vurder først, se familien etterpå</button>` : ""}
         <h3>${mine ? "Din karakter" : "Hva syns du?"}</h3>
         <div class="scores" role="radiogroup" aria-label="Karakter fra 1 til 10">
           ${Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
@@ -942,13 +1076,19 @@
             `<button class="chip ${state.draft.bar === b.id ? "on" : ""}" data-pickbar="${b.id}">${esc(b.name)}</button>`).join("")}</div></div>` : ""}
         <textarea class="input" name="comment" maxlength="300" placeholder="Kommentar (valgfritt)">${esc(state.draft.comment)}</textarea>
         ${photoPicker(d)}
-        <div class="row">
+        ${state.draft.error ? `<p class="error save-error">${esc(state.draft.error)}</p>` : ""}
+        ${state.draft.photoFailed ? `<div class="save-status"><b>✅ Karakter lagret – 📷 bilde gjenstår</b>
+          <div class="row">
+            <button class="btn ghost" data-act="skipphoto" ${state.saving ? "disabled" : ""}>Fortsett uten nytt bilde</button>
+            <button class="btn coral" data-act="retryphoto" ${state.saving ? "disabled" : ""}>${state.saving ? "Sender …" : "Prøv bildet igjen"}</button>
+          </div></div>` : `<div class="row">
           ${mine ? `<button class="btn ghost" data-act="remove" ${state.saving ? "disabled" : ""}>Fjern</button>` : ""}
           <button class="btn coral" data-act="save" ${!sc || state.saving || state.draft.photoBusy ? "disabled" : ""}>${state.saving ? "Lagrer …" : mine ? "Oppdater" : "Lagre"}</button>
-        </div>
+        </div>`}
       </div>
+      ${state.draft.revealed && mine ? revealHtml(list, mine) : ""}
 
-      <div class="family">
+      ${state.draft.blind && !state.draft.revealed ? `<div class="family blind-note"><span>🙈</span>Familiens karakterer vises når du har lagret din.</div>` : `<div class="family">
         <div class="family-head"><h3>Familien</h3>${s ? `<span class="fam-avg">${ring(s, "sm")}<small>${s.n} av ${people().length}</small></span>` : ""}</div>
         ${list.length > 1 ? `<div class="dist">${dist.map((n, i) => `<span style="--h:${(n / maxDist) * 100}%;--rc:${scoreColor(i + 1)}" title="${i + 1}: ${n}"><i></i><small>${i + 1}</small></span>`).join("")}</div>` : ""}
         ${fam.map(({ name, r }) => r ? `<div class="review">
@@ -960,7 +1100,21 @@
               <small class="when">${ago(r.at)}</small>
             </div></div>`
           : `<div class="review muted">${avatar(name)}<div class="review-body"><div class="review-top"><span>${esc(name)}</span><span class="not-yet">ikke smakt</span></div></div></div>`).join("")}
-      </div>`, d.name);
+      </div>`}`, d.name);
+  }
+
+  // After a saved "rate first": your score next to everyone else's.
+  function revealHtml(list, mine) {
+    const others = list.filter((r) => !isMe(r.name));
+    const s = summary(others);
+    const diff = s ? mine.score - s.avg : 0;
+    const verdict = !s ? "Du er den første i familien som har smakt den!"
+      : Math.abs(diff) < 0.5 ? "Helt på linje med familien 🤝"
+      : diff > 0 ? `Du likte den ${fmt(diff)} poeng bedre enn familien 😋` : `Du likte den ${fmt(-diff)} poeng dårligere enn familien 🤔`;
+    return `<div class="reveal"><span class="reveal-k">Avsløring!</span>
+      <div class="reveal-row"><span><small>Du</small><b style="color:${scoreColor(mine.score)}">${mine.score}</b></span>
+        <span><small>Familien${s ? ` (${s.n})` : ""}</small><b style="${s ? `color:${scoreColor(s.avg)}` : ""}">${s ? fmt(s.avg) : "–"}</b></span></div>
+      <p>${verdict}</p><button class="btn ghost wide" data-act="close">Ferdig</button></div>`;
   }
 
   function photoPicker(d) {
@@ -973,45 +1127,140 @@
     </div>`;
   }
 
+  // Unsaved text is kept on this phone for a few days if saving fails, per person and drink.
+  const DRAFT_MS = 3 * 864e5;
+  function keptDraft(id) {
+    const d = store.get("drafts", {})[id];
+    return d && Date.now() - d.t < DRAFT_MS ? d : null;
+  }
+  function keepDraft(id, d) {
+    const all = Object.fromEntries(Object.entries(store.get("drafts", {})).filter(([, x]) => Date.now() - x.t < DRAFT_MS));
+    all[id] = { score: d.score, bar: d.bar, comment: d.comment, t: Date.now() };
+    store.set("drafts", all);
+  }
+  function dropDraft(id) {
+    const all = store.get("drafts", {});
+    if (all[id]) { delete all[id]; store.set("drafts", all); }
+  }
+
+  // After a timeout the write may still have reached the database: look before saying it failed.
+  async function landed(token, id, score, bar, comment) {
+    try {
+      const data = await rpc("dr_get_ratings", { p_token: token });
+      if (!current(token) || !Array.isArray(data.ratings)) return false;
+      const r = data.ratings.find((x) => x.drink === id && isMe(x.name));
+      if (score === null) return !r;
+      return !!r && r.score === score && (r.bar || null) === (bar || null) && (r.comment || "") === (comment || "").slice(0, 300);
+    } catch { return false; }
+  }
+
+  async function sendPhoto(token, id, photo) {
+    try {
+      const pr = await rpc("dr_set_photo", { p_token: token, p_drink: id, p_thumb: photo?.thumb ?? null, p_data: photo?.data ?? null });
+      if (pr.error || !current(token)) return false;
+      photoCache[id] = (photoCache[id] || []).filter((p) => !isMe(p.name));
+      if (photo) photoCache[id].unshift({ name: state.session.name, thumb: photo.thumb, at: new Date().toISOString() });
+      recentPhotos = null;
+      state.ratings = state.ratings.map((r) => (r.drink === id && isMe(r.name) ? { ...r, photo: !!photo } : r));
+      return true;
+    } catch { return false; }
+  }
+
+  // Saves the open drink. Everything is copied before the first await, so
+  // switching drink or person while it runs cannot mix things up, and the lock
+  // (state.saving) holds through both the rating and the photo.
   async function saveRating(remove) {
+    if (state.saving || !state.draft || !DRINK[state.sheet]) return;
+    const draft = state.draft;
     const id = state.sheet;
     const d = DRINK[id];
-    const score = remove ? null : state.draft.score;
-    const bar = remove ? null : state.draft.bar || (d.bars.length === 1 ? d.bars[0] : null);
-    const comment = remove ? null : state.draft.comment.trim();
-    state.saving = true; render();
+    const token = state.session.token;
+    const score = remove ? null : draft.score;
+    const bar = remove ? null : draft.bar || (d.bars.length === 1 ? d.bars[0] : null);
+    const comment = remove ? null : draft.comment.trim();
+    const photo = remove ? undefined : draft.photo;
+    const hadPhoto = !!(myRating(derived().byDrink[id]) || {}).photo;
+    if (!remove && !score) return;
+    state.saving = true;
+    draft.error = "";
+    render();
+    const open = () => state.draft === draft && state.sheet === id;
     try {
-      const res = await rpc("dr_rate", { p_token: state.session.token, p_drink: id, p_score: score, p_bar: bar, p_comment: comment });
-      state.saving = false;
-      if (res.error === "BAD_TOKEN") { logout(); return; }
-      if (res.error) { render(); toast("Kunne ikke lagre. Prøv igjen."); return; }
-      const hadPhoto = !!(myRating(derived().byDrink[id]) || {}).photo;
-      let photo = !remove && (state.draft.photo === undefined ? hadPhoto : !!state.draft.photo);
-      if (!remove && state.draft.photo !== undefined) {
-        try {
-          const pr = await rpc("dr_set_photo", { p_token: state.session.token, p_drink: id, p_thumb: state.draft.photo?.thumb ?? null, p_data: state.draft.photo?.data ?? null });
-          if (pr.error) throw new Error(pr.error);
-          photoCache[id] = (photoCache[id] || []).filter((p) => !isMe(p.name));
-          if (state.draft.photo) photoCache[id].unshift({ name: state.session.name, thumb: state.draft.photo.thumb, at: new Date().toISOString() });
-          recentPhotos = null;
-        } catch {
-          photo = hadPhoto;
-          setTimeout(() => toast("Karakteren er lagret, men bildet kom ikke med. Prøv igjen."), 2700);
-        }
+      let res;
+      try {
+        res = await rpc("dr_rate", { p_token: token, p_drink: id, p_score: score, p_bar: bar, p_comment: comment });
+      } catch (e) {
+        if (!current(token) || !(await landed(token, id, score, bar, comment))) throw e;
+        res = { ok: true };
       }
-      if (remove) photoCache[id] = (photoCache[id] || []).filter((p) => !isMe(p.name));
+      if (!current(token)) return;
+      if (res.error === "BAD_TOKEN") { logout(); return; }
+      if (res.error) throw new Error(res.error);
+
+      // The rating is saved: from here on, only the photo can still fail.
+      dropDraft(id);
+      draft.restored = false;
       state.ratings = state.ratings.filter((r) => !(r.drink === id && isMe(r.name)));
-      if (!remove) state.ratings = [{ drink: id, name: state.session.name, score, bar, comment: comment || null, photo, at: new Date().toISOString() }, ...state.ratings];
-      closeSheet();
-      toast(remove ? "Vurdering fjernet" : `Lagret: ${score}/10 for ${d.name}`);
-      const twins = remove ? [] : (derived().byDrink[id] || []).filter((r) => !isMe(r.name) && r.score === score);
+      if (remove) {
+        photoCache[id] = (photoCache[id] || []).filter((p) => !isMe(p.name));
+        state.saving = false;
+        if (open()) closeSheet(); else render();
+        toast("Vurdering fjernet");
+        refresh();
+        return;
+      }
+      state.ratings = [{ drink: id, name: state.session.name, score, bar, comment: comment || null, photo: hadPhoto, at: new Date().toISOString() }, ...state.ratings];
+      const photoOk = photo === undefined || (await sendPhoto(token, id, photo));
+      if (!current(token)) return;
+      state.saving = false;
+      draft.revealed = draft.blind;
+      draft.photoFailed = !photoOk;
+      if (photoOk) draft.photo = undefined;
+      if (open() && (draft.revealed || draft.photoFailed)) { state.scrollTo = draft.photoFailed ? ".save-status" : ".reveal"; render(); }
+      else if (open()) closeSheet();
+      else render();
+      if (!photoOk && !open()) toast("Karakteren er lagret, men bildet kom ikke med.");
+      else if (photoOk) toast(`Lagret: ${score}/10 for ${d.name}`);
+      const twins = (derived().byDrink[id] || []).filter((r) => !isMe(r.name) && r.score === score);
       if (score === 10) EGGS.perfect(d.name);
       else if (score === 1) EGGS.yuck();
       else if (twins.length) EGGS.agree(twins.map((r) => r.name));
       refresh();
-    } catch {
-      state.saving = false; render(); toast(ERR.NETWORK);
+    } catch (e) {
+      if (!current(token)) return;
+      state.saving = false;
+      if (!remove) keepDraft(id, { score, bar: draft.bar, comment: draft.comment });
+      const msg = e.message === "NETWORK" ? "Ikke lagret – får ikke kontakt. Kommentaren er tatt vare på, prøv igjen." : "Ikke lagret. Prøv igjen.";
+      if (open()) { draft.error = msg; render(); } else toast(msg);
+    } finally {
+      if (current(token)) state.saving = false;
     }
+  }
+
+  // Sends only the photo again; the rating is already saved.
+  async function retryPhoto() {
+    const draft = state.draft;
+    if (state.saving || !draft || !draft.photoFailed) return;
+    const id = state.sheet;
+    const token = state.session.token;
+    state.saving = true;
+    render();
+    const ok = await sendPhoto(token, id, draft.photo);
+    if (!current(token)) return;
+    state.saving = false;
+    const open = state.draft === draft && state.sheet === id;
+    if (!ok) { if (open) render(); toast("Bildet kom fortsatt ikke med. Prøv igjen om litt."); return; }
+    draft.photoFailed = false;
+    draft.photo = undefined;
+    if (open && !draft.revealed) closeSheet(); else render();
+    toast("📷 Bildet er lagret");
+    refresh();
+  }
+  function skipPhoto() {
+    if (!state.draft || state.saving) return;
+    state.draft.photoFailed = false;
+    state.draft.photo = undefined;
+    if (state.draft.revealed) render(); else closeSheet();
   }
 
   // Slot-machine pick of a drink you have not tasted yet.
@@ -1127,7 +1376,103 @@
     return `<div class="section-title"><h2>Klistremerker</h2><small>${have.length} av ${STICKERS.length} funnet</small></div>
       <div class="stickers">${STICKERS.map((st) => have.includes(st.id)
         ? `<span class="sticker s-${st.id}" title="${esc(st.name)}"><span>${st.e}</span><b>${esc(st.name)}</b></span>`
-        : `<span class="sticker locked"><span>?</span><b>???</b></span>`).join("")}</div>`;
+        : isMe(name) ? `<button class="sticker locked" data-hint="${st.id}" aria-label="Hint"><span>?</span><b>???</b></button>`
+        : `<span class="sticker locked"><span>?</span><b>???</b></span>`).join("")}</div>
+      ${isMe(name) && have.length < STICKERS.length ? `<p class="hint sticker-tip">Trykk på et «?» for et hint.</p>` : ""}`;
+  }
+  function showHint(id) {
+    const st = STICKERS.find((x) => x.id === id);
+    if (st) toast(`💡 ${typeof st.hint === "function" ? st.hint() : st.hint}`);
+  }
+
+  // ── Quiz ───────────────────────────────────────────────────
+  // Questions are made once when the round starts, from the ratings loaded then.
+  const QUIZ_NAMES = { who: "Hvem skrev det?", score: "Gjett karakteren" };
+  function startQuiz(kind) {
+    const qs = kind === "who"
+      ? QZ.whoRound({ ratings: state.ratings, people: people(), drinks: DRINKS, known })
+      : QZ.guessScore(state.ratings, state.session.name, { known });
+    if (!qs.length) { toast("Ikke nok karakterer fra de andre til dette spillet ennå"); return; }
+    state.quiz = QZ.newRound(kind, qs);
+    render();
+  }
+  const quizBest = (kind) => store.get(`quizbest.v1.${kind}`, null);
+  function quizNext() {
+    const r = state.quiz;
+    if (!r || !QZ.next(r)) return;
+    if (r.done) {
+      const best = quizBest(r.kind);
+      const c = QZ.correct(r);
+      if (!best || c / r.questions.length > best.c / best.n) store.set(`quizbest.v1.${r.kind}`, { c, n: r.questions.length });
+    }
+    render();
+  }
+
+  function quizHtml() {
+    const head = `<div class="sheet-head"><div class="sheet-title"><h2>🎲 Familiespill</h2></div>${closeBtn}</div>`;
+    const r = state.quiz;
+    if (!r) {
+      return sheetWrap(head + `<p class="hint">Spill sammen rundt bordet. Ingen trenger å bestille noe – poengene gjelder bare denne telefonen.</p>
+        <div class="game-modes">
+          <button class="game-mode" data-quiz="who"><span>🕵️</span><span><b>${QUIZ_NAMES.who}</b><small>Hvem i familien skrev kommentaren? Fylles opp med menyspørsmål.</small></span></button>
+          <button class="game-mode" data-quiz="score"><span>🔢</span><span><b>${QUIZ_NAMES.score}</b><small>Hvilken karakter ga de andre?</small></span></button>
+        </div>`, "Familiespill");
+    }
+    if (r.done) {
+      const c = QZ.correct(r);
+      const best = quizBest(r.kind);
+      return sheetWrap(head + `<div class="quiz-done">
+        <span class="quiz-big">${c === r.questions.length ? "🏆" : c ? "🎉" : "🙈"}</span>
+        <h3>Du fikk ${c} av ${r.questions.length} riktige</h3>
+        ${best ? `<p class="hint">Rekord på denne telefonen: ${best.c} av ${best.n}</p>` : ""}
+        <button class="btn coral" data-quiz="${r.kind}">Ny runde</button>
+        <button class="btn ghost wide" data-act="quizmenu">Bytt spill</button></div>`, "Familiespill");
+    }
+    const q = r.questions[r.i];
+    const picked = r.picks[r.i];
+    const d = DRINK[q.drink];
+    const prompt = q.type === "who" ? `Hvem skrev dette om ${esc(d.name)}?`
+      : q.type === "menu" ? "Menyquiz: Hvilken drink er dette?"
+      : `Hvilken karakter ga ${esc(q.name)} til ${esc(d.name)}?`;
+    const quote = q.type === "score" ? "" : `<blockquote class="quiz-q">${esc(q.text)}</blockquote>`;
+    const opts = q.options.map((o, i) => {
+      const cls = picked === undefined ? "" : i === q.answer ? "right" : i === picked ? "wrong" : "dim";
+      const label = q.type === "who" ? `${avatar(o, "sm")}${esc(o)}` : q.type === "score" ? `<b class="quiz-num">${esc(o)}</b>` : esc(o);
+      return `<button class="quiz-opt ${cls}" data-qa="${i}" ${picked === undefined ? "" : "disabled"}>${label}</button>`;
+    }).join("");
+    const last = r.i === r.questions.length - 1;
+    return sheetWrap(head + `<p class="quiz-step">${QUIZ_NAMES[r.kind]} · spørsmål ${r.i + 1} av ${r.questions.length}</p>
+      <p class="quiz-prompt">${prompt}</p>${quote}
+      <div class="quiz-opts ${q.type === "score" ? "nums" : ""}">${opts}</div>
+      ${picked === undefined ? "" : `<p class="quiz-fb">${picked === q.answer ? "Riktig! 🎉" : `Feil – riktig svar er ${esc(q.options[q.answer])}`}</p>
+        <button class="btn coral" data-act="qnext">${last ? "Se resultatet" : "Neste"}</button>`}`, "Familiespill");
+  }
+
+  // ── Holiday postcard ───────────────────────────────────────
+  // A screenshot-friendly summary. Nothing is uploaded or shared automatically.
+  function postcardHtml() {
+    const me = state.session.name;
+    const fav = INS.favorite(state.ratings, me, { known });
+    const top = ranked("all").slice(0, 3);
+    const hot = on("controversy") ? INS.controversial(state.ratings, { known })[0] : null;
+    if (recentPhotos === null) loadRecentPhotos();
+    const pics = recentPhotos || [];
+    const photo = pics.find((p) => isMe(p.name)) || pics[0] || null;
+    const today = new Date().toLocaleDateString("no-NO", { day: "numeric", month: "long" });
+    return sheetWrap(`<div class="sheet-head"><div class="sheet-title"><h2>💌 Feriepostkort</h2></div>${closeBtn}</div>
+      <p class="hint">Ta et skjermbilde for å dele det. Kortet viser navnet ditt${photo ? ` og et bilde fra ${esc(photo.name)}` : ""}; du velger selv hvem som får det.</p>
+      <div class="postcard">
+        <div class="pc-top"><span class="pc-stamp">🏝️</span><div><small>Hilsen fra ferien · hittil (${esc(today)})</small><b>${esc(me)}</b></div></div>
+        ${photo ? `<figure class="pc-fig"><img class="pc-photo" alt="Bilde av ${esc(DRINK[photo.drink].name)}" src="${photo.thumb}"><figcaption>📷 ${esc(photo.name)} · ${esc(DRINK[photo.drink].name)}</figcaption></figure>` : ""}
+        <div class="pc-block"><small>Min favoritt</small>${fav
+          ? `<p class="pc-line"><span>${drinkEmoji(DRINK[fav.drink])} ${esc(DRINK[fav.drink].name)}</span><b>${fav.score}/10</b></p>`
+          : `<p class="pc-empty">Ingen karakterer ennå</p>`}</div>
+        <div class="pc-block"><small>Familiens topp 3</small>${top.length
+          ? `<ol>${top.map((x) => `<li class="pc-line"><span>${drinkEmoji(x.d)} ${esc(x.d.name)}</span><b>${fmt(x.s.avg)}</b></li>`).join("")}</ol>`
+          : `<p class="pc-empty">Ingen drinker med ${MIN_VOTES} stemmer ennå</p>`}</div>
+        ${hot ? `<div class="pc-block"><small>Mest omdiskutert</small><p class="pc-line"><span>🔥 ${esc(DRINK[hot.drink].name)}</span><b>${hot.min}–${hot.max}</b></p></div>` : ""}
+        <p class="pc-foot">${state.ratings.length} karakterer fra familien så langt · DrinkRate</p>
+      </div>`, "Feriepostkort");
   }
 
   let lastSwipe = null;
@@ -1290,6 +1635,10 @@
     if (ds.topcat) { state.topCat = ds.topcat; render(); return; }
     if (ds.drink) { openDrink(ds.drink); return; }
     if (ds.person) { openSheet("person:" + ds.person); freshStickers(); return; }
+    if (ds.twin) { openSheet("twin:" + ds.twin); return; }
+    if (ds.hint) { showHint(ds.hint); return; }
+    if (ds.quiz) { if (state.sheet !== "quiz") openSheet("quiz"); startQuiz(ds.quiz); return; }
+    if (ds.qa !== undefined) { if (state.quiz && QZ.answer(state.quiz, Number(ds.qa))) render(); return; }
     if (ds.photo) {
       const thumb = (recentPhotos || []).find((p) => p.drink === ds.photo && norm(p.name) === norm(ds.who))?.thumb;
       openLightbox(ds.photo, ds.who, thumb);
@@ -1312,7 +1661,11 @@
       case "close": closeSheet(); break;
       case "save": saveRating(false); break;
       case "remove": saveRating(true); break;
-      case "refresh": closeSheet(); refresh(); toast("Oppdatert"); break;
+      case "retryphoto": retryPhoto(); break;
+      case "skipphoto": skipPhoto(); break;
+      case "blind": state.draft.blind = !state.draft.blind; store.set("blind", state.draft.blind); render(); break;
+      case "refresh": closeSheet(); refresh().then(() => { if (!state.stale && !state.loadError) toast("Oppdatert"); }); break;
+      case "reload": if (state.loadError) { state.loaded = false; render(); } refresh(); break;
       case "logout": logout(); break;
       case "wish": toggleWish(state.sheet); render(); break;
       case "rmphoto": state.draft.photo = null; render(); break;
@@ -1323,6 +1676,11 @@
       case "resetskip": store.set("skip", []); render(); break;
       case "aionly": state.aiOnly = !state.aiOnly; render(); break;
       case "surprise": surprise(); break;
+      case "bday": EGGS.birthday(); setTimeout(render, 50); break;
+      case "quiz": state.quiz = null; openSheet("quiz"); break;
+      case "quizmenu": state.quiz = null; render(); break;
+      case "qnext": quizNext(); break;
+      case "postcard": openSheet("postcard"); break;
       case "logo": {
         const now = Date.now();
         logoTaps = [...logoTaps.filter((x) => now - x < 1500), now];
@@ -1331,6 +1689,8 @@
       }
     }
   });
+
+  root.addEventListener("error", (e) => { if (e.target.classList?.contains("pc-photo")) e.target.closest(".pc-fig")?.remove(); }, true);
 
   root.addEventListener("submit", (e) => {
     const form = e.target.closest("form[data-form]");

@@ -3,7 +3,10 @@ const { chromium, devices } = require("playwright");
 const assert = require("assert");
 const OUT = process.argv[2] || ".";
 const BASE = "http://localhost:8787/";
-const CONFIG = `window.DR_CONFIG={url:"http://localhost:8787",key:"sb_publishable_test",family:["Luise","Jesper","Jakob","Astri","Ingvild","Anne","Julie"]};`;
+const PHOTO = process.env.TEST_PHOTO || "/var/tmp/test-photo.jpg";
+const CONFIG = `window.DR_CONFIG={url:"http://localhost:8787",key:"sb_publishable_test",family:["Luise","Jesper","Jakob","Astri","Ingvild","Anne","Julie"],
+  features:{birthday:true,controversy:true,twins:true,quiz:true,blindRating:true,postcard:true},
+  birthday:{id:"anne2026",name:"Anne",date:"2026-10-13",tz:"Asia/Nicosia"}};`;
 
 async function page(browser, opts = {}) {
   const ctx = await browser.newContext({ ...devices["iPhone 13"], ...opts });
@@ -18,6 +21,23 @@ async function page(browser, opts = {}) {
 }
 const fx = (p, cls) => p.locator(`.fx.${cls}`).waitFor({ timeout: 2500 });
 const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator(".fx").waitFor({ state: "detached" }); };
+async function logIn(p, name, pin) {
+  await p.goto(BASE);
+  await p.click(`[data-pick="${name}"]`);
+  await p.fill("input[name=pin]", pin);
+  await p.click("text=Logg inn");
+}
+// Counts calls to one database function; `fail()` decides whether to cut the connection.
+function watch(p, fn, fail = () => false, delay = 0) {
+  const w = { calls: 0 };
+  p.context().route(`**/rpc/${fn}`, async (r) => {
+    w.calls++;
+    if (fail()) return r.abort();
+    if (delay) await new Promise((res) => setTimeout(res, delay));
+    return r.continue();
+  });
+  return w;
+}
 
 (async () => {
   const browser = await chromium.launch();
@@ -64,7 +84,7 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await a.click('[data-pickbar="cap"]');
   await a.fill("textarea[name=comment]", "Beste <b>hittil</b>");
   // Photo: a big camera image is shrunk on the phone before upload
-  await a.setInputFiles('input[name="photo"]', "/var/tmp/test-photo.jpg");
+  await a.setInputFiles('input[name="photo"]', PHOTO);
   await a.locator(".photo-prev img").waitFor();
   const sizes = await a.evaluate(() => document.querySelector(".photo-prev img").src.length);
   assert.ok(sizes < 80000, "thumbnail is small");
@@ -96,13 +116,21 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await dismiss(a);
   await a.fill("input[name=q]", "");
 
-  // Second member rates Mojito 1 → UFF, sees Jesper's comment escaped
+  // Registration is closed: a family member without an account gets a clear message
   const b = await page(browser, { colorScheme: "dark" });
   await b.goto(BASE);
+  await b.click('[data-pick="Julie"]');
+  await b.getByText("Velkommen, Julie!").waitFor();
+  await b.fill("input[name=pin]", "1111");
+  await b.fill("input[name=pin2]", "1111");
+  await b.click("text=Kom i gang");
+  await b.getByText("Nye brukere er stengt. Ta kontakt med Jesper.").waitFor();
+  await b.click("text=Ikke deg? Velg et annet navn");
+
+  // Second member (set up before registration closed) rates Mojito 1 → UFF, sees Jesper's comment escaped
   await b.click('[data-pick="Astri"]');
   await b.fill("input[name=pin]", "4321");
-  await b.fill("input[name=pin2]", "4321");
-  await b.click("text=Kom i gang");
+  await b.click("text=Logg inn");
   await b.locator(".drink").first().waitFor();
   await b.click('[data-drink="porn-star-martini"]');
   await b.getByText("Beste <b>hittil</b>").waitFor();
@@ -227,6 +255,185 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await b.click(".disco-hang");
   await b.locator(".disco-hang").waitFor({ state: "detached" });
 
+  // ── Ingvild: failed first load, rate first, save safety, insights, quiz, postcard
+  const c = await page(browser);
+  let failRatings = true;
+  watch(c, "dr_get_ratings", () => failRatings);
+  await logIn(c, "Ingvild", "5555");
+  await c.getByText("Får ikke hentet vurderingene").waitFor();
+  assert.equal(await c.locator(".drink").count(), 0, "a failed load is not shown as an empty list");
+  failRatings = false;
+  await c.click('[data-act="reload"]');
+  await c.locator(".drink").first().waitFor();
+
+  // Rate first: the family's scores are hidden until her own is saved
+  let failRate = true;
+  const rate = watch(c, "dr_rate", () => failRate, 500);
+  await c.click('[data-drink="mojito"]');
+  await c.click('[data-act="blind"]');
+  await c.locator(".blind-note").waitFor();
+  assert.equal(await c.locator(".sheet .review").count(), 0);
+  assert.equal(await c.locator(".sheet .fam-avg").count(), 0);
+  await c.click('[data-score="9"]');
+  await c.fill("textarea[name=comment]", "Frisk og fin");
+  // Network down: nothing is called saved, nothing revealed, the comment stays
+  await c.click('[data-act="save"]');
+  await c.getByText("Ikke lagret – får ikke kontakt").waitFor();
+  assert.equal(await c.inputValue("textarea[name=comment]"), "Frisk og fin");
+  assert.equal(await c.locator(".blind-note").count(), 1);
+  assert.equal(rate.calls, 1, "a failed write is not retried blindly");
+  await c.screenshot({ path: `${OUT}/12-save-failed.png` });
+  // ...and survives closing the sheet and reloading the page
+  await c.click(".sheet .close");
+  await c.reload();
+  await c.locator(".drink").first().waitFor();
+  await c.click('[data-drink="mojito"]');
+  await c.getByText("Ulagret kladd hentet tilbake").waitFor();
+  assert.equal(await c.inputValue("textarea[name=comment]"), "Frisk og fin");
+  assert.equal(await c.locator(".blind-note").count(), 1, "rate-first is remembered");
+  // Double tap on Lagre: only one write goes out
+  failRate = false;
+  rate.calls = 0;
+  await c.evaluate(() => {
+    document.querySelector('[data-act="save"]').click();
+    const again = document.querySelector('[data-act="save"]');
+    again.disabled = false; // as if the second tap landed before the button was disabled
+    again.click();
+  });
+  await c.getByText("Avsløring!").waitFor();
+  assert.equal(rate.calls, 1);
+  await c.getByText("Du likte den 4,5 poeng bedre enn familien").waitFor(); // 9 vs (8 + 1) / 2
+  await c.locator(".sheet .review").first().waitFor();
+  await c.screenshot({ path: `${OUT}/13-reveal.png` });
+  await c.click('.reveal [data-act="close"]');
+
+  // Rating saved but the photo fails: say so, and send only the photo again
+  let failPhoto = true;
+  const photoW = watch(c, "dr_set_photo", () => failPhoto);
+  await c.click('[data-drink="coeur-de-lion"]');
+  await c.click('[data-act="blind"]'); // back to normal mode
+  await c.locator(".sheet .review").first().waitFor();
+  await c.click('[data-score="7"]');
+  await c.setInputFiles('input[name="photo"]', PHOTO);
+  await c.locator(".photo-prev img").waitFor();
+  rate.calls = 0;
+  await c.click('[data-act="save"]');
+  await fx(c, "agree-fx");
+  await dismiss(c);
+  await c.getByText("bilde gjenstår").waitFor();
+  await c.locator(".photo-prev img").waitFor();
+  await c.screenshot({ path: `${OUT}/14-photo-failed.png` });
+  failPhoto = false;
+  await c.click('[data-act="retryphoto"]');
+  await c.getByText("Bildet er lagret").waitFor();
+  await c.locator(".sheet").waitFor({ state: "detached" });
+  assert.equal(rate.calls, 1, "the retry sends only the photo");
+  assert.equal(photoW.calls, 2);
+  assert.equal(await c.locator('[data-drink="coeur-de-lion"] .tag.photo').count(), 1);
+
+  await c.click('[data-drink="porn-star-martini"]');
+  await c.click('[data-score="9"]');
+  await c.click('[data-act="save"]');
+  await c.locator(".sheet").waitFor({ state: "detached" });
+
+  // Taste twins: [8, 7, 10] vs [9, 7, 9] → 2/3 point on 3 shared drinks
+  await c.click('[data-tab="me"]');
+  await c.getByText("Din smakstvilling er").waitFor();
+  await c.getByText("skiller i snitt 0,7 poeng på 3 felles drinker").waitFor();
+  assert.equal(await c.locator(".twin-row").count(), 1, "Astri shares only 2 drinks");
+  await c.click('[data-twin="Jesper"]');
+  assert.equal(await c.locator(".sheet .twin-list .drink").count(), 3);
+  await c.click(".sheet .close");
+  // Sticker hint
+  await c.locator(".stickers button.sticker.locked").first().click();
+  await c.locator("#toast.show").waitFor();
+  assert.ok((await c.locator("#toast").textContent()).startsWith("💡"));
+  await c.screenshot({ path: `${OUT}/15-me-twins.png`, fullPage: true });
+
+  // Postcard: own favourite (newest of the two 9s), family top 3, most controversial, a photo
+  await c.click('[data-act="postcard"]');
+  await c.locator(".postcard .pc-photo").waitFor();
+  const card = await c.locator(".postcard").textContent();
+  assert.ok(/Min favoritt.*Porn Star Martini.*9\/10/s.test(card), card);
+  assert.equal(await c.locator(".postcard ol li").count(), 3);
+  assert.ok(/Mest omdiskutert.*Mojito.*1–9/s.test(card), card);
+  await c.screenshot({ path: `${OUT}/16-postcard.png` });
+  await c.click(".sheet .close");
+
+  // Most controversial: Mojito 1 / 8 / 9
+  await c.click('[data-tab="family"]');
+  await c.getByText("Mest omdiskutert").waitFor();
+  assert.equal(await c.locator(".hot-card").count(), 1);
+  assert.equal(await c.locator(".hot-card").getAttribute("data-drink"), "mojito");
+  await c.getByText("sprik 8 · 3 personer").waitFor();
+  await c.screenshot({ path: `${OUT}/17-family-hot.png`, fullPage: true });
+
+  // Quiz: "who wrote it" from the two real comments, topped up with menu questions
+  await c.click('[data-act="quiz"]');
+  await c.click('[data-quiz="who"]');
+  const asked = [];
+  for (let i = 0; i < 5; i++) {
+    await c.getByText(`spørsmål ${i + 1} av 5`).waitFor();
+    asked.push([await c.locator(".quiz-prompt").textContent(), await c.locator(".quiz-q").textContent()]);
+    assert.equal(await c.locator(".quiz-q b").count(), 0, "comments are text, not HTML");
+    await c.evaluate(() => { const o = document.querySelectorAll(".quiz-opt"); o[0].click(); });
+    await c.locator(".quiz-opt[disabled]").first().waitFor();
+    await c.locator(".quiz-opt").nth(1).click({ force: true }); // a second tap changes nothing
+    assert.equal(await c.locator(".quiz-opt.right").count(), 1);
+    if (i === 0) await c.screenshot({ path: `${OUT}/18-quiz.png` });
+    await c.click('[data-act="qnext"]');
+  }
+  assert.equal(asked.filter(([q]) => q.startsWith("Hvem skrev")).length, 2, JSON.stringify(asked));
+  assert.ok(asked.some(([, t]) => t === "Beste <b>hittil</b>"));
+  await c.getByText(/Du fikk \d av 5 riktige/).waitFor();
+  await c.getByText(/Rekord på denne telefonen/).waitFor();
+  // Guess the score, then leave mid-round
+  await c.click('[data-act="quizmenu"]');
+  await c.click('[data-quiz="score"]');
+  await c.locator(".quiz-opts.nums .quiz-opt").first().click();
+  await c.locator(".quiz-fb").waitFor();
+  await c.click(".sheet .close");
+  await c.click('[data-act="quiz"]');
+  await c.locator('.game-mode[data-quiz="who"]').waitFor(); // a fresh menu, not the old round
+  await c.click(".sheet .close");
+
+  // ── Anne's birthday: 13 October in Cyprus, whatever zone the phone is in
+  const day = async (iso, opts, name, pin) => {
+    const p = await page(browser, opts);
+    await p.clock.setFixedTime(new Date(iso));
+    await logIn(p, name, pin);
+    await p.locator(".drink").first().waitFor();
+    return p;
+  };
+  // 12 Oct, 23:00 in Cyprus (already the 13th in Tokyo): no banner yet
+  const d12 = await day("2026-10-12T20:00:00Z", { timezoneId: "Asia/Tokyo" }, "Ingvild", "5555");
+  assert.equal(await d12.locator(".bday").count(), 0);
+  // 13 Oct, 01:30 in Cyprus (still the 12th in New York): Anne sees her own banner
+  const d13 = await day("2026-10-12T22:30:00Z", { timezoneId: "America/New_York", reducedMotion: "reduce" }, "Anne", "2222");
+  const awards = watch(d13, "dr_award");
+  await d13.getByText("Gratulerer med dagen, Anne!").waitFor();
+  await d13.getByText("Hele familien skåler for deg i dag").waitFor();
+  await d13.screenshot({ path: `${OUT}/19-birthday.png` });
+  await d13.click('[data-act="bday"]');
+  await fx(d13, "bday-fx");
+  assert.equal(await d13.locator(".bday-fx .fx-burst").isVisible(), false, "no flying confetti with reduced motion");
+  await dismiss(d13);
+  await d13.click('[data-act="bday"]');
+  await fx(d13, "bday-fx");
+  await dismiss(d13);
+  assert.equal(awards.calls, 1, "the sticker is sent once");
+  await d13.getByText("Anne 2026-klistremerket er ditt").waitFor();
+  // Rating still works with the banner there
+  await d13.click('[data-drink="gin-fizz"]');
+  await d13.click('[data-score="8"]');
+  await d13.click('[data-act="save"]');
+  await d13.locator(".sheet").waitFor({ state: "detached" });
+  // 14 Oct: the banner is gone, the sticker stays
+  const d14 = await day("2026-10-14T09:00:00Z", {}, "Anne", "2222");
+  assert.equal(await d14.locator(".bday").count(), 0);
+  await d14.click('[data-tab="me"]');
+  await d14.locator(".stickers .sticker.s-anne2026").waitFor();
+
   // Jesper: own page, logout, wrong PIN, right PIN, remove rating
   await a.click('[data-tab="me"]');
   await a.getByText("Dine karakterer").waitFor();
@@ -245,7 +452,7 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
   await a.click('[data-act="remove"]');
   await a.getByText("Vurdering fjernet").waitFor();
 
-  for (const p of [a, b]) {
+  for (const p of [a, b, c]) {
     for (const tab of ["list", "swipe", "top", "family", "me"]) {
       try { await p.click(`[data-tab="${tab}"]`, { timeout: 5000 }); }
       catch (e) { await p.screenshot({ path: `${OUT}/fail-${tab}.png` }); console.log(await p.evaluate(() => document.body.className + " ov=" + document.body.style.overflow + " sheet=" + !!document.querySelector(".sheet") + " fx=" + !!document.querySelector(".fx"))); throw e; }
@@ -253,7 +460,7 @@ const dismiss = async (p) => { await p.locator(".fx").click(); await p.locator("
       assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `overflow on ${tab}`);
     }
   }
-  assert.deepEqual([...a.errors, ...b.errors], []);
+  assert.deepEqual([...a.errors, ...b.errors, ...c.errors, ...d12.errors, ...d13.errors, ...d14.errors], []);
   console.log("E2E PASSED");
   await browser.close();
 })().catch((e) => { console.error("E2E FAILED:", e); process.exit(1); });
