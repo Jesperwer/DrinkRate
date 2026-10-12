@@ -1,0 +1,11 @@
+{
+  "name": "drinkrate",
+  "private": true,
+  "description": "Familiens drinkguide fra ferien. Bare testverktøy her; siden i site/ har ikke noe byggesteg.",
+  "scripts": {
+    "test": "bash tests/run.sh"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0"
+  }
+}

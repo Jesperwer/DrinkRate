@@ -3,18 +3,80 @@ name: Publish site
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  # Copies site/ onto the gh-pages branch, which GitHub Pages serves.
+  # Full test run on a throwaway Postgres with synthetic data (no production secrets).
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - name: Screenshots (synthetic test data only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screens
+          path: tests/.out/screens
+          retention-days: 7
+
+  # Read-only checks that the live database has the functions the site needs.
+  # Reads the URL and key straight from site/config.js. Prints no names or tokens.
+  database-check:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required functions
+        run: |
+          URL=$(sed -n 's/^ *url: "\(.*\)",/\1/p' site/config.js)
+          KEY=$(sed -n 's/^ *key: "\(.*\)",/\1/p' site/config.js)
+          call() { curl -sS -o body.txt -w '%{http_code}' -X POST "$URL/rest/v1/rpc/$1" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d "$2"; }
+          ZERO='{"p_token":"00000000-0000-0000-0000-000000000000"}'
+          FAIL=0
+          CODE=$(call dr_list_users '{}')
+          if [ "$CODE" = "200" ] && grep -q '^\[' body.txt; then echo "setup.sql OK"; else echo "::error::dr_list_users answered HTTP $CODE. Run supabase/setup.sql."; FAIL=1; fi
+          # A zero token must be refused with BAD_TOKEN: proves the function exists and checks tokens.
+          for fn in dr_get_ratings dr_recent_photos dr_get_stickers; do
+            CODE=$(call $fn "$ZERO")
+            if [ "$CODE" = "200" ] && grep -q BAD_TOKEN body.txt; then echo "$fn OK"; else echo "::error::$fn answered HTTP $CODE without BAD_TOKEN. Run the SQL files in supabase/."; FAIL=1; fi
+          done
+          # An invalid PIN never creates a user; the answer says whether registration is closed.
+          CODE=$(call dr_register '{"p_name":"x","p_pin":"no"}')
+          if grep -q REGISTRATION_CLOSED body.txt; then echo "Registration closed"; else echo "::warning::Registration is still open. Run supabase/security_holiday.sql when the whole family can log in."; fi
+          exit $FAIL
+
+  # Copies site/ onto the gh-pages branch, which GitHub Pages serves. Only after the
+  # tests and the database check have passed.
   deploy:
+    if: github.event_name != 'pull_request'
+    needs: [test, database-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,39 +96,3 @@ jobs:
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -qm "Publish site from $SRC_SHA"
           git push origin gh-pages
-
-  # Checks that the Supabase database is set up (supabase/setup.sql has been run).
-  # Reads the URL and key straight from site/config.js. Does not block the deploy.
-  database-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Call dr_list_users
-        run: |
-          URL=$(sed -n 's/^ *url: "\(.*\)",/\1/p' site/config.js)
-          KEY=$(sed -n 's/^ *key: "\(.*\)",/\1/p' site/config.js)
-          echo "Project: $URL"
-          CODE=$(curl -sS -o body.txt -w '%{http_code}' -X POST "$URL/rest/v1/rpc/dr_list_users" \
-            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}')
-          echo "HTTP $CODE"; cat body.txt; echo
-          if [ "$CODE" != "200" ]; then
-            echo "::error::Database is not set up yet. Run supabase/setup.sql in the Supabase SQL Editor."
-            exit 1
-          fi
-          echo "Database OK"
-      - name: Check photo functions (supabase/photos.sql)
-        run: |
-          URL=$(sed -n 's/^ *url: "\(.*\)",/\1/p' site/config.js)
-          KEY=$(sed -n 's/^ *key: "\(.*\)",/\1/p' site/config.js)
-          CODE=$(curl -sS -o body.txt -w '%{http_code}' -X POST "$URL/rest/v1/rpc/dr_recent_photos" \
-            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{"p_token":"00000000-0000-0000-0000-000000000000"}')
-          echo "HTTP $CODE"; cat body.txt; echo
-          if [ "$CODE" = "200" ]; then echo "Photos OK"; else echo "::warning::Photos not set up yet. Run supabase/photos.sql in the Supabase SQL Editor."; fi
-      - name: Check sticker functions (supabase/stickers.sql)
-        run: |
-          URL=$(sed -n 's/^ *url: "\(.*\)",/\1/p' site/config.js)
-          KEY=$(sed -n 's/^ *key: "\(.*\)",/\1/p' site/config.js)
-          CODE=$(curl -sS -o body.txt -w '%{http_code}' -X POST "$URL/rest/v1/rpc/dr_get_stickers" \
-            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{"p_token":"00000000-0000-0000-0000-000000000000"}')
-          echo "HTTP $CODE"; cat body.txt; echo
-          if [ "$CODE" = "200" ]; then echo "Stickers OK"; else echo "::warning::Stickers not set up yet. Run supabase/stickers.sql in the Supabase SQL Editor."; fi
