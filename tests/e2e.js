@@ -5,7 +5,7 @@ const OUT = process.argv[2] || ".";
 const BASE = "http://localhost:8787/";
 const PHOTO = process.env.TEST_PHOTO || "/var/tmp/test-photo.jpg";
 const CONFIG = `window.DR_CONFIG={url:"http://localhost:8787",key:"sb_publishable_test",family:["Luise","Jesper","Jakob","Astri","Ingvild","Anne","Julie"],
-  features:{birthday:true,controversy:true,twins:true,quiz:true,blindRating:true,postcard:true},
+  features:{birthday:true,controversy:true,twins:true,quiz:true,tableGames:true,blindRating:true,postcard:true},
   birthday:{id:"anne2026",name:"Anne",date:"2026-10-13",tz:"Asia/Nicosia"}};`;
 
 async function page(browser, opts = {}) {
@@ -72,6 +72,19 @@ function watch(p, fn, fail = () => false, delay = 0) {
   await a.click('[data-bar="all"]');
   await a.click('[data-cat="all"]');
 
+  // Untested is an independent, personal filter and intersects the other filters.
+  await a.click('[data-act="untested"]');
+  assert.equal(await a.locator('.drink').count(), total - 2);
+  assert.equal(await a.locator('[data-drink="mojito"]').count(), 0);
+  await a.click('[data-cat="cocktail"]');
+  await a.click('[data-bar="cap"]');
+  await a.click('[data-act="aionly"]');
+  const expected = await a.evaluate(() => window.DRINKS.filter((d) => d.cat === "cocktail" && d.ai.includes("cap") && d.id !== "mojito").length);
+  assert.equal(await a.locator('.drink').count(), expected);
+  await a.click('[data-cat="all"]');
+  await a.click('[data-bar="all"]');
+  await a.click('[data-act="aionly"]');
+
   // Rate a new non-inclusive drink with 10 → PERFEKT
   await a.fill("input[name=q]", "porn star");
   await a.click('[data-drink="porn-star-martini"]');
@@ -95,6 +108,8 @@ function watch(p, fn, fail = () => false, delay = 0) {
   await dismiss(a);
 
   // Flavours are their own drinks
+  assert.equal(await a.locator('[data-drink="porn-star-martini"]').count(), 0, "saving removes a drink from untested immediately");
+  await a.click('[data-act="untested"]');
   await a.fill("input[name=q]", "daiquiri");
   assert.equal(await a.locator(".drink").count(), 4);
   await a.locator('[data-drink="strawberry-daiquiri"]').waitFor();
@@ -132,6 +147,9 @@ function watch(p, fn, fail = () => false, delay = 0) {
   await b.fill("input[name=pin]", "4321");
   await b.click("text=Logg inn");
   await b.locator(".drink").first().waitFor();
+  await b.click('[data-act="untested"]');
+  assert.equal(await b.locator('[data-drink="mojito"]').count(), 1, "someone else's rating does not hide a drink");
+  await b.click('[data-act="untested"]');
   await b.click('[data-drink="porn-star-martini"]');
   await b.getByText("Beste <b>hittil</b>").waitFor();
   // Jesper's photo shows for Astri and opens full size
@@ -435,6 +453,8 @@ function watch(p, fn, fail = () => false, delay = 0) {
   await d14.locator(".stickers .sticker.s-anne2026").waitFor();
 
   // Jesper: own page, logout, wrong PIN, right PIN, remove rating
+  await require("./table-games.e2e")(a, OUT);
+  await a.click('[data-act="untested"]');
   await a.click('[data-tab="me"]');
   await a.getByText("Dine karakterer").waitFor();
   await a.locator(".stickers .sticker.s-miranda").waitFor();
@@ -448,9 +468,13 @@ function watch(p, fn, fail = () => false, delay = 0) {
   await a.fill("input[name=pin]", "1234");
   await a.click("text=Logg inn");
   await a.locator(".drink").first().waitFor();
+  assert.equal(await a.locator('[data-act="untested"]').getAttribute("aria-pressed"), "false", "logout resets personal filter");
   await a.click('[data-drink="porn-star-martini"]');
   await a.click('[data-act="remove"]');
   await a.getByText("Vurdering fjernet").waitFor();
+  await a.click('[data-act="untested"]');
+  await a.locator('[data-drink="porn-star-martini"]').waitFor();
+  await a.click('[data-act="untested"]');
 
   for (const p of [a, b, c]) {
     for (const tab of ["list", "swipe", "top", "family", "me"]) {
