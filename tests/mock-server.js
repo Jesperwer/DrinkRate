@@ -20,6 +20,9 @@ const FNS = {
   dr_recent_photos: ["p_token"],
   dr_award: ["p_token", "p_sticker"],
   dr_get_stickers: ["p_token"],
+  dr_add_custom_drink: ["p_token", "p_base", "p_name", "p_ingredients"],
+  dr_list_custom_drinks: ["p_token"],
+  dr_remove_custom_drink: ["p_token", "p_id"],
 };
 const TYPES = { mime: { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json" } };
 

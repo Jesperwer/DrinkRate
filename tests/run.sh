@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One command for the whole test run: fresh local database, SQL files, synthetic
-# test data, unit tests and the mobile end-to-end test against tests/mock-server.js.
+# test data, unit tests and the mobile end-to-end tests (tests/e2e.js, tests/lagkamp.e2e.js)
+# against tests/mock-server.js.
 #   npm test
 # Uses the normal PG* environment variables (PGHOST, PGUSER, PGPASSWORD, PGPORT)
 # and refuses anything but a local Postgres: the tests must never touch production.
@@ -28,7 +29,7 @@ do \$\$ begin
 end \$\$;
 SQL
 export PGDATABASE=$DB
-for f in supabase/setup.sql supabase/photos.sql supabase/stickers.sql supabase/security_holiday.sql tests/seed.sql tests/sql-checks.sql; do
+for f in supabase/setup.sql supabase/photos.sql supabase/stickers.sql supabase/security_holiday.sql supabase/custom_drinks.sql tests/seed.sql tests/sql-checks.sql; do
   echo "   $f"
   psql -q -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
@@ -45,4 +46,6 @@ for _ in $(seq 1 50); do
   curl -sf "http://localhost:$PORT/" >/dev/null && break
   sleep 0.2
 done
-TEST_PHOTO="$OUT/test-photo.jpg" node tests/e2e.js "$OUT/screens"
+PORT=$PORT TEST_PHOTO="$OUT/test-photo.jpg" node tests/e2e.js "$OUT/screens"
+PORT=$PORT node tests/lagkamp.e2e.js "$OUT/screens"
+PORT=$PORT node tests/custom-drinks.e2e.js "$OUT/screens"

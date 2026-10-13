@@ -14,6 +14,7 @@
   const on = (f) => !!(CFG.features && CFG.features[f]);
   const BDAY = CFG.birthday || null;
   const known = (id) => !!DRINK[id];
+  const MENU_IDS = new Set(DRINKS.map((d) => d.id)); // the real menu; family variants are added on top
   const CAT = {
     cocktail: { name: "Cocktails", e: "🍹" },
     free: { name: "Alkoholfritt", e: "🥤" },
@@ -324,6 +325,8 @@
     quiz: null, // the running quiz round
     tableSetup: null,
     tableGame: null,
+    customReady: null, // family variants: true = loaded, false = not set up in the database
+    variant: null, // the open "make a variant" form
   };
   // True while `token` is still the logged-in session, so answers that arrive
   // after logging out or switching person are dropped.
@@ -389,10 +392,11 @@
     if (!state.session) return;
     const token = state.session.token;
     try {
-      const [data] = await Promise.all([rpc("dr_get_ratings", { p_token: token }), loadStickers()]);
+      const [data, custom] = await Promise.all([rpc("dr_get_ratings", { p_token: token }), loadCustom(token), loadStickers()]);
       if (!current(token)) return;
       if (data.error === "BAD_TOKEN") { logout(); return; }
       if (!Array.isArray(data.ratings)) throw new Error(data.error || "BAD_ANSWER");
+      if (custom) applyCustom(custom);
       state.ratings = data.ratings.filter((r) => DRINK[r.drink]);
       if (data.me && data.me !== state.session.name) saveSession({ ...state.session, name: data.me });
       const wasLoaded = state.loaded && !state.loadError;
@@ -411,6 +415,10 @@
 
   function logout() {
     clearTableGame();
+    applyCustom([]);
+    state.customReady = null;
+    state.variant = null;
+    lkReset();
     saveSession(null);
     state.ratings = [];
     state.sheet = null;
@@ -428,6 +436,122 @@
     Object.assign(state, { tab: "list", bar: "all", cat: "all", aiOnly: false, untestedOnly: false, q: "", topCat: "all",
       loaded: false, loadError: false, stale: false, lastSync: null, quiz: null, pick: null });
     renderLogin();
+  }
+
+  // ── Family variants ("Mojito uten sukker") ─────────────────
+  // Stored in the database (supabase/custom_drinks.sql) and shown to everyone like a menu
+  // drink. Each has its own id (c-…), so ratings, photos and games work unchanged.
+  // Category, bars and price come from the drink it is based on.
+  async function loadCustom(token) {
+    if (!on("customDrinks")) return null;
+    try {
+      const rows = await rpc("dr_list_custom_drinks", { p_token: token });
+      if (!Array.isArray(rows)) return null;
+      state.customReady = true;
+      return rows;
+    } catch (e) {
+      // 404: the SQL has not been run yet. Then the button is simply not shown.
+      if (e.cause && /HTTP 404/.test(e.cause.message)) state.customReady = false;
+      return null;
+    }
+  }
+  function applyCustom(rows) {
+    for (let i = DRINKS.length - 1; i >= 0; i--) if (DRINKS[i].custom) { delete DRINK[DRINKS[i].id]; DRINKS.splice(i, 1); }
+    const byId = Object.fromEntries(rows.map((c) => [c.id, c]));
+    const baseOf = (c, depth = 0) => MENU_IDS.has(c.base) ? DRINK[c.base] : byId[c.base] && depth < 5 ? baseOf(byId[c.base], depth + 1) : null;
+    for (const c of rows) {
+      if (!c || !/^c-[a-z0-9]{10}$/.test(c.id) || DRINK[c.id]) continue;
+      const base = baseOf(c);
+      const d = { id: c.id, cat: base ? base.cat : "cocktail", name: c.name, desc: c.ingredients, bars: base ? base.bars : BARS.map((b) => b.id),
+        ai: base ? base.ai : [], price: base ? base.price : "", custom: { base: c.base, by: c.by, at: c.at } };
+      DRINKS.push(d);
+      DRINK[d.id] = d;
+    }
+    cache = { ratings: null };
+  }
+  function openVariant(baseId) {
+    const base = DRINK[baseId];
+    if (!base || !state.customReady) return;
+    state.variant = { base: baseId, name: `${base.name} – min variant`, ingredients: base.desc || "", error: "", busy: false };
+    state.draft = null;
+    openSheet("variant");
+    root.querySelector('.sheet input[name="vname"]')?.select();
+  }
+  const VARIANT_ERR = {
+    NAME_TAKEN: "Det finnes allerede en variant med det navnet. Velg et annet.",
+    BAD_NAME: "Navnet må ha 2–60 tegn.",
+    BAD_INGREDIENTS: "Skriv ingrediensene (2–300 tegn).",
+    TOO_MANY: "Du har laget 50 varianter, som er grensen.",
+    BAD_DRINK: "Fant ikke drinken varianten skal bygge på.",
+  };
+  async function saveVariant() {
+    const v = state.variant;
+    if (!v || v.busy) return;
+    const name = v.name.trim().replace(/\s+/g, " "), ingredients = v.ingredients.trim();
+    v.error = name.length < 2 || name.length > 60 ? VARIANT_ERR.BAD_NAME : ingredients.length < 2 || ingredients.length > 300 ? VARIANT_ERR.BAD_INGREDIENTS
+      : DRINKS.some((d) => norm(d.name).trim() === norm(name)) ? "Det finnes allerede en drink med det navnet. Velg et annet." : "";
+    if (v.error) { render(); return; }
+    const token = state.session.token;
+    v.busy = true;
+    render();
+    let res;
+    try { res = await rpc("dr_add_custom_drink", { p_token: token, p_base: v.base, p_name: name, p_ingredients: ingredients }); }
+    catch (e) {
+      // A timeout may still have reached the database: look before calling it failed.
+      const rows = current(token) ? await loadCustom(token) : null;
+      const mine = rows && rows.find((c) => norm(c.name) === norm(name) && isMe(c.by));
+      res = mine ? { ok: true, id: mine.id } : { error: e.cause && /HTTP 404/.test(e.cause.message) ? "NOT_SET_UP" : "NETWORK" };
+    }
+    if (!current(token) || state.variant !== v) return;
+    v.busy = false;
+    if (res.error === "BAD_TOKEN") { logout(); return; }
+    if (!res.ok) {
+      v.error = res.error === "NETWORK" ? "Ikke lagret – får ikke kontakt. Prøv igjen."
+        : res.error === "NOT_SET_UP" ? "Varianter er ikke slått på i databasen ennå." : VARIANT_ERR[res.error] || "Ikke lagret. Prøv igjen.";
+      render();
+      return;
+    }
+    const rows = await loadCustom(token);
+    if (!current(token)) return;
+    if (rows) applyCustom(rows);
+    state.variant = null;
+    toast(`✏️ ${name} er laget – gi den en karakter`);
+    if (DRINK[res.id]) openDrink(res.id); else closeSheet();
+  }
+  async function removeVariant(id) {
+    const d = DRINK[id];
+    if (!d || !d.custom || state.saving) return;
+    const token = state.session.token;
+    state.saving = true;
+    render();
+    let res;
+    try { res = await rpc("dr_remove_custom_drink", { p_token: token, p_id: id }); } catch { res = { error: "NETWORK" }; }
+    if (!current(token)) return;
+    state.saving = false;
+    if (!res.ok) {
+      if (state.draft) state.draft.error = res.error === "RATED_BY_OTHERS" ? "Noen andre har gitt den karakter, så den kan ikke slettes."
+        : res.error === "NETWORK" ? "Ikke slettet – får ikke kontakt. Prøv igjen." : "Ikke slettet.";
+      render();
+      return;
+    }
+    const rows = await loadCustom(token);
+    if (!current(token)) return;
+    applyCustom(rows || []);
+    state.ratings = state.ratings.filter((r) => r.drink !== id);
+    closeSheet();
+    toast("Varianten er slettet");
+    refresh();
+  }
+  function variantHtml() {
+    const v = state.variant, base = DRINK[v.base];
+    return sheetWrap(`<div class="sheet-head"><div class="sheet-title"><span class="emoji big cat-${base.cat}">✏️</span>
+        <div><h2>Egen variant</h2><div class="where">Basert på ${esc(base.name)}</div></div></div>${closeBtn}</div>
+      <label class="field"><span>Navn</span><input class="input" name="vname" maxlength="60" value="${esc(v.name)}" autocomplete="off"></label>
+      <label class="field"><span>Ingredienser</span><textarea class="input" name="vingr" maxlength="300" rows="4">${esc(v.ingredients)}</textarea></label>
+      <p class="hint">Endre det du vil. Kategori og barer arves fra ${esc(base.name)}. Hele familien ser varianten og kan gi den karakter.</p>
+      ${v.error ? `<p class="error" role="alert">${esc(v.error)}</p>` : ""}
+      <button class="btn coral" data-act="variant-save" ${v.busy ? "disabled" : ""}>${v.busy ? "Lagrer …" : "Lagre og gi karakter"}</button>
+      <button class="btn ghost wide" data-act="close">Avbryt</button>`, "Egen variant");
   }
 
   // ── Derived data ───────────────────────────────────────────
@@ -562,15 +686,19 @@
     else if (state.tab === "top") content = viewTop();
     else if (state.tab === "family") content = viewFamily();
     else content = viewMe();
+    // Behind Lagkamp nothing may sit in the page: the family feed holds the answers.
+    const game = state.sheet === "lagkamp";
+    if (game) content = "";
+    const inert = game ? " inert" : "";
 
     const title = TABS.find(([id]) => id === state.tab)[1];
     root.innerHTML = `<div class="sky"></div>
-      <header class="top"><div class="wrap top-row">
+      <header class="top"${inert}><div class="wrap top-row">
         <h1 data-act="logo">${state.tab === "list" ? "DrinkRate" : title}</h1>
         <button class="me-btn" data-act="menu" aria-label="Meny">${avatar(state.session.name)}</button>
       </div></header>
-      <main class="wrap tab-${state.tab}">${state.stale && state.loaded && !state.loadError ? staleNote() : ""}${content}</main>
-      <nav class="nav"><div class="nav-in">
+      <main class="wrap tab-${state.tab}"${inert}>${state.stale && state.loaded && !state.loadError ? staleNote() : ""}${content}</main>
+      <nav class="nav"${inert}><div class="nav-in">
         ${TABS.map(([id, label]) =>
           `<button class="tab ${state.tab === id ? "on" : ""}" data-tab="${id}">${ICONS[id]}<span>${label}</span></button>`).join("")}
       </div></nav>
@@ -584,6 +712,7 @@
       // Bring news inside the sheet (the reveal, a photo that still needs sending) into view.
       if (state.scrollTo) { sheet.querySelector(state.scrollTo)?.scrollIntoView({ block: "center" }); state.scrollTo = null; }
     }
+    applyGuard();
     onScroll();
   }
 
@@ -622,7 +751,7 @@
       <span class="drink-main">
         <span class="drink-name">${esc(d.name)}</span>
         ${d.desc ? `<span class="drink-desc">${esc(d.desc)}</span>` : ""}
-        <span class="drink-meta">${priceTag(d)}${list ? raters(list) : `<span class="where-small">${esc(barNames(d.bars))}</span>`}${list && list.some((r) => r.photo) ? `<span class="tag photo">📷 ${list.filter((r) => r.photo).length}</span>` : ""}</span>
+        <span class="drink-meta">${d.custom ? `<span class="tag variant">✏️ Variant</span>` : ""}${priceTag(d)}${list ? raters(list) : `<span class="where-small">${esc(barNames(d.bars))}</span>`}${list && list.some((r) => r.photo) ? `<span class="tag photo">📷 ${list.filter((r) => r.photo).length}</span>` : ""}</span>
       </span>
       <span class="score">${ring(s)}<small>${s ? `${s.n} ${s.n === 1 ? "stemme" : "stemmer"}` : "ingen ennå"}</small></span>
     </button>`;
@@ -799,7 +928,7 @@
         <small>${a.v}</small></div>`).join("")}</div>`;
     }
     html += controversySection();
-    if (on("quiz") || on("tableGames")) html += `<button class="game-btn" data-act="quiz"><span>🎲</span><span><b>Familiespill</b><small>${on("tableGames") ? "Menyduellen · Selg meg drinken · Quiz" : "Hvem skrev det? · Gjett karakteren"}</small></span></button>`;
+    if (on("quiz") || on("tableGames") || on("teamGame")) html += `<button class="game-btn" data-act="quiz"><span>🎲</span><span><b>Familiespill</b><small>${[on("teamGame") && "Lagkamp", on("tableGames") && "Menyduellen · Selg meg drinken", on("quiz") && "Quiz"].filter(Boolean).join(" · ")}</small></span></button>`;
     html += `<div class="section-title"><h2>Smakerne</h2><small>Trykk for å se alt</small></div><div class="people-list">`;
     for (const name of people()) {
       const rs = personRatings(name);
@@ -1011,7 +1140,9 @@
     render();
   }
   function closeSheet() {
+    state.variant = null;
     if (state.sheet === "quiz") state.quiz = null;
+    if (state.sheet === "lagkamp") lkClose();
     clearTableGame();
     state.sheet = null;
     state.draft = null;
@@ -1035,6 +1166,8 @@
     if (state.sheet === "pick") return pickHtml();
     if (state.sheet === "quiz") return quizHtml();
     if (state.sheet === "tablegame") return tableGameHtml();
+    if (state.sheet === "lagkamp") return lkHtml();
+    if (state.sheet === "variant") return state.variant ? variantHtml() : "";
     if (state.sheet === "postcard") return postcardHtml();
     if (state.sheet.startsWith("twin:")) return twinHtml(state.sheet.slice(5));
     if (state.sheet.startsWith("person:")) {
@@ -1069,6 +1202,8 @@
       ${d.desc ? `<p class="desc">${esc(d.desc)}</p>` : ""}
       ${d.flav ? `<p class="flav">Smaker: ${esc(d.flav)}</p>` : ""}
       <p class="ai-line">${aiText}</p>
+      ${d.custom ? `<p class="variant-line">✏️ Variant av ${DRINK[d.custom.base] ? `<button class="link inline" data-drink="${esc(d.custom.base)}">${esc(DRINK[d.custom.base].name)}</button>` : "en drink som ikke finnes lenger"} · laget av ${esc(d.custom.by)}</p>` : ""}
+      ${on("customDrinks") && state.customReady ? `<button class="chip toggle variant-btn" data-act="variant">✏️ Lag egen variant</button>` : ""}
 
       <div class="rate-box">
         ${state.draft.restored ? `<p class="draft-note">↩️ Ulagret kladd hentet tilbake</p>` : ""}
@@ -1095,6 +1230,10 @@
         </div>`}
       </div>
       ${state.draft.revealed && mine ? revealHtml(list, mine) : ""}
+      ${d.custom && isMe(d.custom.by) && !list.some((r) => !isMe(r.name)) ? (state.draft.confirmDelete
+        ? `<div class="save-status"><b>Slette varianten ${esc(d.name)}?</b> Din karakter av den slettes også.<div class="row">
+            <button class="btn ghost" data-act="variant-keep">Avbryt</button><button class="btn coral" data-act="variant-delete" ${state.saving ? "disabled" : ""}>Ja, slett</button></div></div>`
+        : `<button class="link" data-act="variant-ask-delete">Slett varianten</button>`) : ""}
 
       ${state.draft.blind && !state.draft.revealed ? `<div class="family blind-note"><span>🙈</span>Familiens karakterer vises når du har lagret din.</div>` : `<div class="family">
         <div class="family-head"><h3>Familien</h3>${s ? `<span class="fam-avg">${ring(s, "sm")}<small>${s.n} av ${people().length}</small></span>` : ""}</div>
@@ -1422,6 +1561,7 @@
     if (!r) {
       return sheetWrap(head + `<p class="hint">Spill sammen rundt bordet. Ingen trenger å bestille noe – poengene gjelder bare denne telefonen.</p>
         <div class="game-modes">
+          ${on("teamGame") ? `<button class="game-mode" data-lk="open"><span>👥</span><span><b>Lagkamp</b><small>Lag mot lag med familiens bilder, kommentarer og karakterer. Fasiten er skjult til alle har svart.</small></span></button>` : ""}
           ${on("tableGames") ? `<button class="game-mode" data-table="duel"><span>🏆</span><span><b>Menyduellen</b><small>Pek, diskuter og kår bordets neste favoritt.</small></span></button>
           <button class="game-mode" data-table="pitch"><span>🎤</span><span><b>Selg meg drinken</b><small>20 sekunder, en drink og din beste salgstale.</small></span></button>` : ""}
           ${on("quiz") ? `
@@ -1597,6 +1737,7 @@
   }
   function tableAction(act) {
     const g = state.tableGame;
+    guardSheet(); // the next screen's button often sits where this one was
     if (act === "table-menu") { tableMenu(); return; }
     if (act === "table-start") { startTableGame(); return; }
     if (act === "table-again") { stopTableClock(); state.tableGame = null; tableRender(); return; }
@@ -1614,6 +1755,669 @@
       if (act === "pitch-next") GAMES.nextPitch(g);
     }
     tableRender();
+  }
+
+  // ── Lagkamp: teams on one phone, hidden answers, scores in the app ─
+  // The engine (lagkamp.js) holds the rules; this part draws one screen at a time from
+  // its public view, saves after every move (lagkamp-store.js) and never puts an answer
+  // in the page before the reveal.
+  const LK = window.DR_LAGKAMP;
+  const LKS = window.DR_LAGKAMP_STORE;
+  const LK_MARKS = [{ s: "▲", name: "trekant" }, { s: "●", name: "sirkel" }, { s: "■", name: "firkant" }, { s: "◆", name: "rute" }];
+  const LK_PHOTO_TYPES = ["photoDrink", "photoOwner"];
+  const TAP_GUARD_MS = 450;
+  let lkGen = 0; // bumped on logout and new games: late answers from before are dropped
+  const lkFresh = () => ({ view: "home", home: null, session: null, saved: 0, save: "saved", tempOk: false, notice: "",
+    covered: false, pick: null, setup: null, prep: null, overlay: null, busy: false, media: [], blobs: {}, urls: {}, imgErr: {}, imgLoading: {} });
+  let lk = lkFresh();
+  const lkOwner = () => LK.key(state.session?.name);
+  const lkId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+  const lkTeamOf = (s, id) => s.teams.find((t) => t.teamId === id);
+  const lkTeam = (t) => t ? `<span class="lk-team lk-t${t.mark}"><b class="lk-mark" aria-hidden="true">${LK_MARKS[t.mark].s}</b><span>${esc(t.name)}</span></span>` : "";
+  const lkTeams = (s, ids) => LK.andList(ids.map((id) => lkTeam(lkTeamOf(s, id))));
+  const lkOptLabel = (q, id) => id === null ? "Pass" : esc((q.options.find((o) => o.optionId === id) || {}).label || "?");
+  const lkLive = (s) => !!s && (s.status === "active" || s.status === "paused");
+
+  // Shared tap guard: right after a screen changes, a second tap on the same spot must
+  // not hit the button that was just drawn there (table games use it too).
+  let sheetGuardUntil = 0, guardTimer = null;
+  function guardSheet() { sheetGuardUntil = Date.now() + TAP_GUARD_MS; applyGuard(); }
+  function applyGuard() {
+    const sheet = root.querySelector(".sheet"), left = sheetGuardUntil - Date.now();
+    if (!sheet || left <= 0) return;
+    sheet.classList.add("guard");
+    clearTimeout(guardTimer);
+    guardTimer = setTimeout(() => root.querySelector(".sheet")?.classList.remove("guard"), left);
+  }
+
+  function lkRender(moved) {
+    render();
+    const sheet = root.querySelector(".sheet");
+    if (!moved || !sheet) return;
+    sheet.scrollTop = 0;
+    sheet.querySelector(".lk-focus")?.focus({ preventScroll: true });
+  }
+  function lkReleaseImages() {
+    for (const url of Object.values(lk.urls)) URL.revokeObjectURL(url);
+    Object.assign(lk, { urls: {}, imgErr: {}, imgLoading: {} });
+  }
+  // Logout or another person: nothing from this game stays on screen or in memory.
+  function lkReset() {
+    lkGen++;
+    lkReleaseImages();
+    lk = lkFresh();
+  }
+
+  function lkOpen() {
+    if (!on("teamGame")) return;
+    clearTableGame();
+    state.quiz = null;
+    Object.assign(lk, { view: "home", overlay: null, notice: "" });
+    openSheet("lagkamp");
+    lkLoadHome();
+  }
+  // Closing the sheet pauses the game; it is never thrown away.
+  function lkClose() {
+    if (lk.session && lk.session.status === "active" && !lk.busy) lkDo("pause", {}, { quiet: true });
+    Object.assign(lk, { view: "home", overlay: null, covered: true, pick: null });
+    lkReleaseImages();
+  }
+
+  async function lkLoadHome() {
+    const gen = lkGen, owner = lkOwner();
+    lk.home = { status: "loading" };
+    lkRender(true);
+    let all;
+    try { all = await LKS.list(owner); } catch { all = null; }
+    if (gen !== lkGen || owner !== lkOwner()) return;
+    if (!all) { lk.home = { status: "error" }; lkRender(); return; }
+    const good = all.filter((s) => !LK.check(s) && s.ownerKey === owner);
+    const newest = (xs) => xs.sort((a, b) => b.updatedAt - a.updatedAt)[0] || null;
+    let live = newest(good.filter(lkLive));
+    // A game that only lives in memory (saving failed) is newer than anything stored.
+    if (lkLive(lk.session) && lk.session.ownerKey === owner && (!live || live.sessionId === lk.session.sessionId)) live = lk.session;
+    lk.home = { status: "ready", live, last: newest(good.filter((s) => s.status === "finished")),
+      bad: all.filter((s) => LK.check(s)).map((s) => ({ id: s && s.sessionId, why: LK.check(s) })) };
+    lkRender();
+  }
+
+  // ── Saving ─────────────────────────────────────────────────
+  let lkChain = Promise.resolve();
+  function lkPersist() { lkChain = lkChain.then(lkSaveNow, lkSaveNow); return lkChain; }
+  async function lkSaveNow() {
+    const s = lk.session;
+    if (!s || s.revision === lk.saved) return;
+    const gen = lkGen;
+    let r;
+    try { r = lk.saved ? await LKS.save(s, lk.saved) : await LKS.create(s, lk.media); } catch { r = null; }
+    if (gen !== lkGen || lk.session?.sessionId !== s.sessionId) return;
+    if (!r) lk.save = lk.tempOk ? "memory" : "failed";
+    else if (r.ok) { lk.saved = s.revision; lk.save = "saved"; if (s.status === "finished") LKS.prune(s.ownerKey, (x) => !LK.check(x)).catch(() => {}); }
+    else if (r.conflict && r.latest.sessionId === s.sessionId && !LK.check(r.latest)) {
+      // Another tab moved the same game on: show what is stored, nothing is overwritten.
+      Object.assign(lk, { session: r.latest, saved: r.latest.revision, save: "saved", covered: true, pick: null, overlay: null,
+        notice: "Spillet er endret i en annen fane. Du ser nå det som sist ble lagret der." });
+    } else {
+      lk.save = lk.tempOk ? "memory" : "failed";
+      lk.notice = r.conflict ? "Et annet spill pågår allerede på denne telefonen (kanskje i en annen fane)." : "Det lagrede spillet finnes ikke lenger på telefonen.";
+    }
+    if (state.sheet === "lagkamp") lkRender();
+  }
+
+  // Every move: apply it to the engine with what the button was drawn for, show the new
+  // screen at once, then save.
+  function lkDo(type, extra = {}, opts = {}) {
+    const s = lk.session;
+    if (!s || lk.save === "failed") return false;
+    const res = LK.apply(s, { type, actionId: lkId(), ...extra, expect: { sessionId: s.sessionId, revision: s.revision, ...(extra.expect || {}) } });
+    if (!res.ok) {
+      if (res.error === "reason" && lk.overlay) { lk.overlay.error = "Skriv en kort grunn når poengene avviker fra fasiten."; lkRender(); }
+      return false;
+    }
+    lk.session = res.session;
+    lk.pick = null;
+    lk.covered = false;
+    if (!opts.keepOverlay) lk.overlay = null;
+    if (!opts.quiet) { guardSheet(); lkRender(true); }
+    lkPersist();
+    return true;
+  }
+  const lkExpect = (ds) => ({ revision: Number(ds.rev), phase: ds.ph, questionId: ds.q, teamId: ds.team || undefined });
+
+  // ── Team setup ─────────────────────────────────────────────
+  const LK_SETTINGS = () => ({ count: 10, types: [...LK.TYPES], menuReserve: false, cat: "all", bar: "all" });
+  function lkNewSetup(from) {
+    const assign = Object.fromEntries(FAMILY.map((n) => [n, -1]));
+    if (from) {
+      const guests = [];
+      from.teams.forEach((t, i) => t.members.forEach((m) => {
+        const fam = FAMILY.find((n) => LK.key(n) === LK.key(m.name));
+        if (fam && !m.guest) assign[fam] = i; else guests.push({ name: m.name, team: i });
+      }));
+      return { count: from.teams.length, names: [...from.teams.map((t) => t.name), "Lag 3", "Lag 4"].slice(0, 4), assign, guests, guestDraft: "", tried: false,
+        settings: { ...LK_SETTINGS(), ...from.settings } };
+    }
+    const me = FAMILY.find((n) => isMe(n));
+    if (me) assign[me] = 0; // the host plays too; Lag 1 is just a starting point
+    return { count: 2, names: ["Lag 1", "Lag 2", "Lag 3", "Lag 4"], assign, guests: [], guestDraft: "", tried: false, settings: LK_SETTINGS() };
+  }
+  function lkSetupTeams(st) {
+    return Array.from({ length: st.count }, (_, i) => ({
+      name: st.names[i],
+      members: [...FAMILY.filter((n) => st.assign[n] === i).map((name) => ({ name, guest: false })),
+        ...st.guests.filter((g) => g.team === i).map((g) => ({ name: g.name, guest: true }))],
+    }));
+  }
+  function lkStartSetup(from) {
+    lk.setup = lkNewSetup(from);
+    lk.prep = null;
+    lk.view = "teams";
+    lk.overlay = null;
+    guardSheet();
+    lkRender(true);
+  }
+
+  // ── Preparing: fetch, check and freeze ─────────────────────
+  async function lkPrepare() {
+    const gen = ++lkGen, token = state.session.token, owner = lkOwner();
+    const stale = () => gen !== lkGen || !current(token) || owner !== lkOwner();
+    lk.prep = { status: "loading" };
+    lkRender();
+    let ratings;
+    try {
+      const data = await rpc("dr_get_ratings", { p_token: token });
+      if (stale()) return;
+      if (data.error === "BAD_TOKEN") { logout(); return; }
+      if (!Array.isArray(data.ratings)) throw new Error("BAD_ANSWER");
+      ratings = data.ratings;
+    } catch {
+      if (stale()) return;
+      lk.prep = { status: "error" };
+      lkRender();
+      return;
+    }
+    let photos = [], photoStatus = "empty", unreadable = 0, offered = 0;
+    try {
+      const res = await rpc("dr_recent_photos", { p_token: token });
+      if (stale()) return;
+      if (!Array.isArray(res)) throw new Error("BAD_ANSWER");
+      const list = res.filter((p) => p && DRINK[p.drink]);
+      offered = list.length;
+      for (let i = 0; i < list.length; i += 2) photos.push(...await Promise.all(list.slice(i, i + 2).map(lkDecode)));
+      if (stale()) return;
+      unreadable = photos.filter((p) => !p).length;
+      photos = photos.filter(Boolean).map((p, i) => ({ ...p, mediaId: `m${i + 1}` }));
+      photoStatus = offered ? "ready" : "empty";
+    } catch {
+      if (stale()) return;
+      photos = [];
+      photoStatus = "error";
+    }
+    lk.prep = { status: "ready", seed: Math.floor(Math.random() * 2 ** 31), at: new Date().toISOString(), ratings, photos, photoStatus, unreadable, offered, gen };
+    lkBuild();
+    lkRender();
+  }
+  // A thumbnail is only used if this phone can actually show it.
+  async function lkDecode(p) {
+    try {
+      const m = /^data:(image\/(?:jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/.exec(p.thumb || "");
+      if (!m) return null;
+      const bin = atob(m[2].replace(/\s/g, ""));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: m[1] });
+      await new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob), img = new Image();
+        const end = (ok) => { clearTimeout(timer); URL.revokeObjectURL(url); ok ? resolve() : reject(new Error("UNREADABLE")); };
+        const timer = setTimeout(() => end(false), 5000);
+        img.onload = () => end(img.naturalWidth > 0);
+        img.onerror = () => end(false);
+        img.src = url;
+      });
+      return { drink: p.drink, name: p.name, type: m[1], data: bytes.buffer, blob };
+    } catch { return null; }
+  }
+  function lkBuild() {
+    const p = lk.prep;
+    if (!p || p.status !== "ready") return;
+    const st = lk.setup.settings;
+    const snap = LK.snapshot({ ratings: p.ratings, photos: p.photos, family: FAMILY, drinks: DRINKS, at: p.at });
+    p.deck = LK.buildDeck(snap, DRINKS, st, LK.seeded(p.seed));
+  }
+
+  async function lkStart() {
+    const p = lk.prep, st = lk.setup;
+    const photoBlock = p && p.photoStatus === "error" && st.settings.types.some((t) => LK_PHOTO_TYPES.includes(t));
+    if (lk.busy || !p || !p.deck || !p.deck.total || photoBlock) return;
+    lk.busy = true;
+    const sessionId = lkId(), owner = lkOwner();
+    const teams = lkSetupTeams(st).map((t, i) => ({ ...t, teamId: `${sessionId.slice(0, 8)}-t${i + 1}`, mark: i,
+      members: t.members.map((m, j) => ({ ...m, memberId: `${i + 1}.${j + 1}` })) }));
+    const session = LK.newSession({ sessionId, ownerKey: owner, teams, settings: st.settings, deck: p.deck, snapshotAt: p.at, appVersion: "13" });
+    const byId = Object.fromEntries(p.photos.map((x) => [x.mediaId, x]));
+    const media = p.deck.media.map((id) => ({ mediaId: id, type: byId[id].type, data: byId[id].data }));
+    lkReleaseImages();
+    const gen = ++lkGen;
+    Object.assign(lk, { session, saved: 0, save: "saved", tempOk: false, notice: "", media, blobs: Object.fromEntries(p.deck.media.map((id) => [id, byId[id].blob])),
+      covered: false, pick: null, overlay: null, prep: null, lastSetup: st });
+    let r;
+    try { r = await LKS.create(session, media); } catch { r = null; }
+    if (gen !== lkGen) return;
+    lk.busy = false;
+    if (r && r.ok) lk.saved = session.revision;
+    else if (r && r.conflict) {
+      Object.assign(lk, { session: null, view: "home", notice: "Et annet spill pågår allerede på denne telefonen (kanskje i en annen fane). Fortsett det eller avslutt det først." });
+      lkLoadHome();
+      return;
+    } else lk.save = "failed";
+    lk.view = "game";
+    guardSheet();
+    lkRender(true);
+  }
+
+  // ── Images inside the game: only the frozen copy, no names anywhere ─
+  function lkUrl(id) {
+    if (lk.urls[id]) return lk.urls[id];
+    if (lk.blobs[id]) return (lk.urls[id] = URL.createObjectURL(lk.blobs[id]));
+    if (!lk.imgLoading[id] && lk.session) {
+      const s = lk.session, gen = lkGen;
+      lk.imgLoading[id] = true;
+      LKS.media(s.sessionId, id)
+        .then((b) => { if (gen === lkGen) { if (b) lk.blobs[id] = b; else lk.imgErr[id] = true; } })
+        .catch(() => { if (gen === lkGen) lk.imgErr[id] = true; })
+        .finally(() => { if (gen === lkGen) { lk.imgLoading[id] = false; if (state.sheet === "lagkamp") render(); } });
+    }
+    return null;
+  }
+  function lkPhoto(id, n, v) {
+    if (lk.imgErr[id]) {
+      return `<div class="lk-photo lk-photo-err" role="alert"><p><b>Bildet kan ikke vises.</b> Prøv igjen, eller annuller spørsmålet for alle lag (ingen får poeng).</p>
+        <button class="btn ghost wide" data-lk="img-retry" data-v="${esc(id)}">Prøv bildet igjen</button>
+        ${v && ["intro", "handoff", "answering", "ready"].includes(v.phase) ? `<button class="link" data-lk="ask-skip">Annuller spørsmålet</button>` : ""}</div>`;
+    }
+    const url = lkUrl(id);
+    if (!url) return `<div class="lk-photo lk-photo-wait">Henter bildet …</div>`;
+    return `<button class="lk-photo" data-lk="zoom" data-v="${esc(id)}" aria-label="Forstørr bildet"><img src="${url}" alt="Bilde til spørsmål ${n}" data-lk-img="${esc(id)}"></button>`;
+  }
+
+  // ── Screens ────────────────────────────────────────────────
+  const lkHead = (title, extra = "") => `<div class="sheet-head lk-head"><div class="sheet-title"><h2 class="lk-focus" tabindex="-1">${title}</h2></div>
+    <div class="head-btns">${extra}<button class="close lk-close" data-act="close" aria-label="Lukk og sett på pause">${ICONS.close}</button></div></div>`;
+  function lkScoreStrip(s) {
+    const res = LK.results(s);
+    return `<ul class="lk-strip" aria-label="Poengtavle">${s.teams.map((t) => `<li>${lkTeam(t)}<b>${res.totals[t.teamId]}</b></li>`).join("")}</ul>`;
+  }
+  function lkSaveLine() {
+    const s = lk.session;
+    if (!s) return "";
+    if (lk.save === "memory") return `<p class="lk-unsaved" role="alert">⚠️ Ikke lagret på telefonen. Lukker du appen nå, kan kampen gå tapt. Vi prøver igjen etter hvert trekk.</p>`;
+    return `<p class="lk-saved" role="status">${lk.saved === s.revision ? "✓ Lagret på denne telefonen" : "Lagrer …"}</p>`;
+  }
+  function lkNotice() {
+    return lk.notice ? `<div class="lk-notice" role="alert"><p>${esc(lk.notice)}</p><button class="link" data-lk="notice-ok">OK</button></div>` : "";
+  }
+
+  function lkHtml() {
+    let body;
+    if (lk.overlay) body = lkOverlayHtml();
+    else if (lk.view === "teams") body = lkTeamsHtml();
+    else if (lk.view === "options") body = lkOptionsHtml();
+    else if (lk.view === "game" && lk.session) body = lkGameHtml();
+    else body = lkHomeHtml();
+    return sheetWrap(`<div class="lk">${body}</div>`, "Lagkamp");
+  }
+
+  function lkHomeHtml() {
+    const h = lk.home || { status: "loading" };
+    let html = lkHead("👥 Lagkamp") + lkNotice();
+    html += `<p class="hint">Hele bordet spiller på denne telefonen. Appen trekker spørsmål fra familiens bilder, kommentarer og karakterer og holder fasiten skjult til alle lag har svart – også verten kan være med på et lag.</p>`;
+    if (h.status === "loading") return html + `<p class="lk-status" role="status">Henter lagrede spill …</p>`;
+    if (h.status === "error") {
+      html += `<div class="lk-notice" role="alert"><p>Telefonen lar ikke appen lagre spill her (for eksempel i privat nettlesing). Du kan spille, men kampen kan ikke fortsettes etter at appen er lukket.</p></div>`;
+      return html + `<button class="btn coral" data-lk="new">Nytt spill</button>`;
+    }
+    if (h.bad.length) {
+      html += `<div class="lk-notice" role="alert"><p><b>Et lagret spill kan ikke leses</b> (${esc(h.bad[0].why)}). Ingen poeng er hentet fra det. Det slettes bare hvis du velger å starte et nytt spill.</p>
+        <button class="btn ghost wide" data-lk="ask-clear-bad">Start nytt spill og slett det som ikke kan leses</button></div>`;
+    }
+    if (h.live) {
+      const s = h.live, res = LK.results(s), done = res.answered + res.skipped;
+      html += `<section class="lk-card"><h3>Spill pågår</h3>
+        <p class="hint">${done} av ${s.order.length} spørsmål ferdig · ${s.rounds.length} runder${s.status === "paused" ? " · på pause" : ""}</p>
+        <ul class="lk-board">${s.teams.map((t) => `<li>${lkTeam(t)}<b>${res.totals[t.teamId]} p</b></li>`).join("")}</ul>
+        <button class="btn coral" data-lk="continue">Fortsett spill</button></section>
+        <button class="link" data-lk="ask-new">Avslutt gammelt og start nytt</button>`;
+    } else if (!h.bad.length) html += `<button class="btn coral" data-lk="new">Nytt spill</button>`;
+    if (h.last) {
+      const s = h.last, res = LK.results(s);
+      html += `<section class="lk-card lk-last"><h3>Siste resultat</h3><p>${lkWinnerText(s, res)}</p>
+        <ul class="lk-board">${s.teams.map((t) => `<li>${lkTeam(t)}<b>${res.totals[t.teamId]} p</b></li>`).join("")}</ul>
+        <p class="hint">${new Date(s.updatedAt).toLocaleString("no-NO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}${s.endedEarly ? " · avsluttet før siste spørsmål" : ""}</p>
+        <button class="btn ghost wide" data-lk="show-last">Se hele resultatet</button></section>`;
+    }
+    return html + `<p class="filter-note">Kampen lagres bare på denne telefonen, for deg. Tømmer du nettleserdataene, forsvinner den. Spillet endrer ingen karakterer eller bilder.</p>
+      <button class="btn ghost wide" data-lk="menu">Til spillmenyen</button>`;
+  }
+
+  function lkTeamsHtml() {
+    const st = lk.setup, teams = lkSetupTeams(st);
+    const errors = st.tried ? LK.checkTeams(teams, FAMILY) : [];
+    const opt = (i, cur) => `<option value="${i}" ${cur === i ? "selected" : ""}>${i < 0 ? "Ikke med" : `${LK_MARKS[i].s} ${esc(st.names[i] || `Lag ${i + 1}`)}`}</option>`;
+    const select = (attr, cur, label) => `<select class="input lk-select" ${attr} aria-label="${esc(label)}">${[-1, ...Array.from({ length: st.count }, (_, i) => i)].map((i) => opt(i, cur)).join("")}</select>`;
+    return lkHead("👥 Lagene") + `
+      <p class="lk-label">Antall lag</p>
+      <div class="chips tight lk-count">${[2, 3, 4].map((n) => `<button class="chip ${st.count === n ? "on" : ""}" data-lk="team-count" data-v="${n}" aria-pressed="${st.count === n}">${n} lag</button>`).join("")}</div>
+      <div class="lk-names">${Array.from({ length: st.count }, (_, i) => `<label class="field"><span><b class="lk-mark lk-t${i}" aria-hidden="true">${LK_MARKS[i].s}</b> Navn på lag ${i + 1} (${LK_MARKS[i].name})</span>
+        <input class="input" data-lk-input="team-name" data-i="${i}" maxlength="${LK.LIMITS.name}" value="${esc(st.names[i])}" autocomplete="off"></label>`).join("")}</div>
+      <p class="lk-label">Hvem er med?</p>
+      <ul class="lk-people">${FAMILY.map((n) => `<li>${avatar(n, "sm")}<span class="lk-pname">${esc(n)}${isMe(n) ? " <em>(deg)</em>" : ""}</span>${select(`data-lk-input="assign" data-name="${esc(n)}"`, st.assign[n], `Lag for ${n}`)}</li>`).join("")}
+        ${st.guests.map((g, i) => `<li><span class="avatar sm lk-guest" aria-hidden="true">G</span><span class="lk-pname">${esc(g.name)} <em>(gjest)</em></span>${select(`data-lk-input="guest-team" data-i="${i}"`, g.team, `Lag for ${g.name}`)}
+          <button class="round-btn lk-rm" data-lk="guest-rm" data-v="${i}" aria-label="Fjern gjesten ${esc(g.name)}">${ICONS.close}</button></li>`).join("")}</ul>
+      <div class="lk-guest-add"><label class="field"><span>Gjest som ikke har DrinkRate (bare i dette spillet)</span>
+        <input class="input" data-lk-input="guest-draft" maxlength="${LK.LIMITS.name}" value="${esc(st.guestDraft)}" placeholder="Navn" autocomplete="off"></label>
+        <button class="btn ghost wide" data-lk="guest-add">Legg til gjest</button></div>
+      ${errors.length ? `<ul class="lk-errors" role="alert">${errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
+      <button class="btn coral" data-lk="teams-next">Videre til spillvalg</button>
+      <button class="btn ghost wide" data-lk="home">Tilbake</button>`;
+  }
+
+  function lkOptionsHtml() {
+    const st = lk.setup, set = st.settings, p = lk.prep;
+    const typeBox = (t) => `<label><input type="checkbox" data-lk-set="type" data-v="${t}" ${set.types.includes(t) ? "checked" : ""}> ${esc(LK.TYPE_NAMES[t])}</label>`;
+    const sel = (key, label, options) => `<label class="field"><span>${label}</span><select class="input" data-lk-set="${key}">${options.map(([id, name]) => `<option value="${id}" ${set[key] === id ? "selected" : ""}>${esc(name)}</option>`).join("")}</select></label>`;
+    let status = "", ready = false, total = 0;
+    const photoBlock = p && p.photoStatus === "error" && set.types.some((t) => LK_PHOTO_TYPES.includes(t));
+    if (!p || p.status === "loading") status = `<p class="lk-status" role="status">Henter familiens vurderinger og bilder …</p>`;
+    else if (p.status === "error") status = `<div class="lk-notice" role="alert"><p><b>Får ikke hentet vurderingene.</b> Sjekk nettet. Ingenting er borte.</p><button class="btn ghost wide" data-lk="prep-retry">Prøv igjen</button></div>`;
+    else {
+      const d = p.deck;
+      total = d.total;
+      const rows = Object.entries(d.byType).map(([t, n]) => `<li>${esc(LK.TYPE_NAMES[t])}: ${n}</li>`).join("");
+      const photoNote = p.photoStatus === "error"
+        ? `<div class="lk-notice" role="alert"><p><b>Bildene kunne ikke hentes</b> (nettverksfeil – det betyr ikke at dere mangler bilder).</p>
+            <button class="btn ghost wide" data-lk="prep-retry">Prøv igjen</button>${photoBlock ? `<button class="btn ghost wide" data-lk="no-photos">Spill uten bildeoppgaver</button>` : ""}</div>`
+        : p.photoStatus === "empty" ? `<p class="filter-note">Ingen bilder i familien ennå, så bildeoppgavene er ikke med.</p>`
+        : `<p class="filter-note">Bildeoppgavene bruker de ${p.offered} nyeste bildene.${p.unreadable ? ` ${p.unreadable} bilde${p.unreadable === 1 ? "" : "r"} kunne ikke vises og er ikke med.` : ""}</p>`;
+      const missing = d.missing.filter((t) => !(p.photoStatus === "error" && LK_PHOTO_TYPES.includes(t)));
+      status = photoNote + (total ? `<div class="lk-card" role="status"><p class="lk-plan"><b>${total} spørsmål fordelt på ${d.rounds.length} ${d.rounds.length === 1 ? "runde" : "runder"}</b></p><ul class="lk-types">${rows}</ul>
+          ${d.short ? `<p class="hint">Dere ba om ${d.target}, men datagrunnlaget gir bare ${total}. Ingenting fylles opp med oppdiktet innhold.${set.menuReserve ? "" : " Slå på menyhint for å fylle opp."}</p>` : ""}
+          ${d.reserve ? `<p class="hint">${d.reserve} av spørsmålene er menyhint (reserve).</p>` : ""}</div>`
+        : `<div class="lk-notice" role="alert"><p><b>For lite data til en kamp med disse valgene.</b> ${set.menuReserve ? "Velg flere oppgavetyper eller en annen kategori/bar." : "Velg flere oppgavetyper, en annen kategori/bar, eller slå på menyhint som reserve."}</p></div>`) +
+        (missing.length ? `<p class="filter-note">Ikke nok gyldige data til: ${esc(missing.map((t) => LK.TYPE_NAMES[t]).join(", "))}.</p>` : "");
+      ready = total > 0 && !photoBlock;
+    }
+    return lkHead("👥 Spillvalg") + `
+      <p class="lk-label">Antall spørsmål</p>
+      <div class="chips tight lk-count">${LK.COUNTS.map((n) => `<button class="chip ${set.count === n ? "on" : ""}" data-lk="q-count" data-v="${n}" aria-pressed="${set.count === n}">${n}</button>`).join("")}</div>
+      <fieldset class="table-checks lk-checks"><legend class="lk-label">Oppgavetyper</legend>${LK.TYPES.map(typeBox).join("")}</fieldset>
+      <div class="table-filters">${sel("cat", "Kategori", [["all", "Alle kategorier"], ...CAT_ORDER.map((id) => [id, CAT[id].name])])}
+        ${sel("bar", "Bar", [["all", "Alle barer"], ...BARS.map((b) => [b.id, b.name])])}</div>
+      <div class="table-checks"><label><input type="checkbox" data-lk-set="menuReserve" ${set.menuReserve ? "checked" : ""}> Fyll opp med menyhint hvis det er for lite data</label></div>
+      ${status}
+      <p class="filter-note">Spørsmålene trekkes automatisk og vises ikke før kampen starter – heller ikke for den som setter opp spillet.</p>
+      <button class="btn coral" data-lk="start" ${ready && !lk.busy ? "" : "disabled"}>${lk.busy ? "Starter …" : ready ? `Start kampen (${total} spørsmål)` : "Start kampen"}</button>
+      <button class="btn ghost wide" data-lk="back-teams">Tilbake til lagene</button>`;
+  }
+
+  // The question as everyone may see it: prompt, photo and the same options for all.
+  function lkCard(v, mode) {
+    const q = v.question, s = lk.session;
+    const head = `<p class="lk-type">${esc(q.typeName)}</p><h3 class="lk-prompt">${esc(q.prompt.title)}</h3>
+      ${q.mediaId ? lkPhoto(q.mediaId, v.index + 1, v) : ""}
+      ${q.prompt.quote ? `<blockquote class="quiz-q">${esc(q.prompt.quote)}</blockquote>` : ""}
+      ${q.prompt.note ? `<p class="hint">${esc(q.prompt.note)}</p>` : ""}
+      ${q.multi ? `<p class="hint">Flere av alternativene kan være riktige. Ett riktig svar gir poeng.</p>` : ""}`;
+    let opts;
+    if (mode === "answer") {
+      opts = `<div class="quiz-opts lk-opts" role="group" aria-label="Svaralternativer">${q.options.map((o) => `<button class="quiz-opt ${lk.pick === o.optionId ? "lk-picked" : ""}" data-lk="pick" data-v="${o.optionId}" aria-pressed="${lk.pick === o.optionId}">${lk.pick === o.optionId ? "✓ " : ""}${esc(o.label)}</button>`).join("")}</div>`;
+    } else if (mode === "reveal") {
+      const ok = v.reveal.accepted;
+      opts = `<ul class="lk-opts-list">${q.options.map((o) => `<li class="${ok.includes(o.optionId) ? "lk-right" : ""}">${ok.includes(o.optionId) ? "<b>✓ Riktig:</b> " : ""}${esc(o.label)}</li>`).join("")}</ul>`;
+    } else {
+      opts = `<ul class="lk-opts-list">${q.options.map((o) => `<li>${esc(o.label)}</li>`).join("")}</ul>`;
+    }
+    return `<div class="lk-q">${head}${opts}</div>`;
+  }
+  const lkBtn = (act, label, v, cls = "btn coral", extra = "") => `<button class="${cls}" data-lk="${act}" data-rev="${lk.session.revision}" data-ph="${v.phase}"${v.question ? ` data-q="${v.question.questionId}"` : ""}${extra}>${label}</button>`;
+
+  function lkGameHtml() {
+    const s = lk.session, v = LK.view(s);
+    const tools = s.status === "finished" ? "" : `<button class="round-btn lk-tool" data-lk="score" aria-label="Poengtavle og historikk">📊</button>`;
+    let html = lkHead("👥 Lagkamp", tools) + lkNotice();
+    if (lk.save === "failed") {
+      return html + `<div class="lk-notice lk-fail" role="alert"><p><b>⚠️ Spillet er ikke lagret.</b> Telefonen klarte ikke å lagre kampen (lagringen kan være full eller blokkert).</p>
+        <button class="btn coral" data-lk="save-retry">Prøv igjen</button>
+        <button class="btn ghost wide" data-lk="save-temp">Fortsett uten sikker lagring</button>
+        <p class="filter-note">Fortsetter dere, kan kampen ikke gjenopptas hvis appen lukkes.</p></div>`;
+    }
+    if (s.status === "finished") return html + lkResultHtml(s) + lkSaveLine();
+    if (s.status === "paused") {
+      return html + `<div class="lk-center"><span class="quiz-big" aria-hidden="true">⏸</span><h3>Spillet er på pause</h3>
+        <p class="hint">Ingen svar eller fasit vises her. Trykk når dere er klare.</p></div>${lkScoreStrip(s)}
+        ${lkBtn("resume", "Fortsett spillet", v)}${lkSaveLine()}`;
+    }
+    const where = `<p class="quiz-step">Runde ${v.roundNo} av ${v.roundCount}${v.phase === "roundEnd" ? " · ferdig" : ` · spørsmål ${v.inRound} av ${v.roundSize}`}</p>`;
+    const team = v.teamId && lkTeamOf(s, v.teamId);
+    let main;
+    if (v.phase === "intro") {
+      main = where + lkCard(v, "show") + `<p class="hint">Diskuter i laget. Hvert lag låser svaret sitt i hemmelighet.</p>
+        <p class="lk-order">Svarrekkefølge: ${v.order.map((id) => lkTeam(lkTeamOf(s, id))).join(" → ")}</p>` + lkBtn("begin", "Start svarrunden", v);
+    } else if (v.phase === "handoff" || (v.phase === "answering" && lk.covered)) {
+      const prev = v.lastLocked && v.phase === "handoff" && lkTeamOf(s, v.lastLocked);
+      main = where + `<div class="lk-handoff">${prev ? `<p class="lk-locked" role="status">✓ Svaret til ${lkTeam(prev)} er låst.</p>` : ""}
+          <p class="lk-give">Gi telefonen til</p><p class="lk-big">${lkTeam(team)}</p>
+          <p class="hint">${esc(LK.andList(team.members.map((m) => m.name)))}</p></div>
+        ${lkBtn("ready", "Vi er klare", v, "btn coral", ` data-team="${team.teamId}"`)}
+        ${prev && v.canUnlock ? `<div class="lk-undo">${lkBtn("unlock", `Angre – ${esc(prev.name)} trykket feil`, v, "link")}</div>` : ""}`;
+    } else if (v.phase === "answering") {
+      main = where + `<p class="lk-turn">${lkTeam(team)} svarer</p>` + lkCard(v, "answer") +
+        lkBtn("lock", "Lås svaret", v, "btn coral", ` data-team="${team.teamId}" ${lk.pick ? "" : "disabled"}`) +
+        `<div class="lk-pass">${lkBtn("pass", "Pass – vi står over", v, "btn ghost wide", ` data-team="${team.teamId}"`)}</div>`;
+    } else if (v.phase === "ready") {
+      const last = lkTeamOf(s, v.lastLocked);
+      main = where + `<div class="lk-center"><span class="quiz-big" aria-hidden="true">🔒</span><h3>Alle lag har svart</h3><p class="hint">Snu telefonen så alle ser, og vis fasiten.</p></div>` +
+        lkBtn("reveal", "Vis fasit", v) + (v.canUnlock ? `<div class="lk-undo">${lkBtn("unlock", `Angre – ${esc(last.name)} trykket feil`, v, "link")}</div>` : "");
+    } else if (v.phase === "reveal") {
+      const rv = v.reveal, o = rv.outcome;
+      main = where + lkCard(v, "reveal") + `<div class="lk-reveal">${rv.lines.map((l) => `<p>${esc(l)}</p>`).join("")}</div>
+        <ul class="lk-answers">${rv.teams.map((t) => `<li class="${t.point ? "lk-pt" : ""}">${lkTeam(lkTeamOf(s, t.teamId))}<span>${lkOptLabel(v.question, t.optionId)} ${t.optionId === null ? "" : t.right ? "✓" : "✗"}</span><b>${t.point ? "+1" : "0"}</b></li>`).join("")}</ul>
+        ${o.corrected ? `<p class="lk-corrected" role="status">Poengene er rettet manuelt.</p>` : !o.teams.length ? `<p class="hint">Ingen lag fikk poeng på dette spørsmålet.</p>` : ""}
+        <button class="btn ghost wide" data-lk="correct-open" data-v="${v.question.questionId}">Rett poeng / velg vinnere</button>` +
+        lkBtn("next", v.lastInRound ? "Se rundens resultat" : "Neste spørsmål", v);
+    } else if (v.phase === "roundEnd") {
+      const r = v.round, res = LK.results(s);
+      main = where + `<div class="lk-center"><span class="quiz-big" aria-hidden="true">🏁</span><h3>${r.winners.length === 0 ? "Ingen lag fikk poeng i denne runden" : r.winners.length === 1 ? `${lkTeam(lkTeamOf(s, r.winners[0]))} vant runden!` : `${lkTeams(s, r.winners)} deler rundeseieren!`}</h3></div>
+        <table class="lk-table"><thead><tr><th scope="col">Lag</th><th scope="col">Runden</th><th scope="col">Totalt</th></tr></thead>
+        <tbody>${s.teams.map((t) => `<tr><th scope="row">${lkTeam(t)}</th><td>${r.points[t.teamId]}</td><td><b>${res.totals[t.teamId]}</b></td></tr>`).join("")}</tbody></table>` +
+        lkBtn("next", v.lastRound ? "Se sluttresultatet" : "Neste runde", v);
+    }
+    const canSkip = ["intro", "handoff", "answering", "ready"].includes(v.phase) && !(v.phase === "answering" && !lk.covered);
+    return html + (v.phase === "answering" && !lk.covered ? "" : lkScoreStrip(s)) + main + lkSaveLine() +
+      `<div class="lk-tools">${v.phase === "answering" && !lk.covered ? "" : `<button class="btn ghost" data-lk="pause">⏸ Pause</button>`}
+        <button class="btn ghost" data-lk="more" data-skip="${canSkip ? 1 : 0}">Mer …</button></div>`;
+  }
+
+  function lkWinnerText(s, res) {
+    if (!res.winners.length) return "Ingen lag fikk poeng – helt likt.";
+    return res.winners.length === 1 ? `🏆 ${lkTeam(lkTeamOf(s, res.winners[0]))} vant med ${res.max} poeng!` : `🏆 ${lkTeams(s, res.winners)} deler seieren med ${res.max} poeng!`;
+  }
+  function lkResultHtml(s) {
+    const res = LK.results(s);
+    return `<div class="lk-center"><span class="quiz-big" aria-hidden="true">🏆</span><h3>${lkWinnerText(s, res).replace(/^🏆 /, "")}</h3>
+        ${s.endedEarly ? `<p class="hint">Kampen ble avsluttet før siste spørsmål. Dette er resultatet så langt.</p>` : ""}</div>
+      <table class="lk-table"><thead><tr><th scope="col">Lag</th><th scope="col">Poeng</th></tr></thead>
+        <tbody>${[...s.teams].sort((a, b) => res.totals[b.teamId] - res.totals[a.teamId]).map((t) => `<tr><th scope="row">${lkTeam(t)}<small>${esc(t.members.map((m) => m.name).join(", "))}</small></th><td><b>${res.totals[t.teamId]}</b></td></tr>`).join("")}</tbody></table>
+      <p class="hint">${res.answered} besvart · ${res.skipped} hoppet over · ${res.corrected} rettet manuelt</p>
+      <details class="table-history lk-hist-wrap"><summary>Se alle spørsmål og svar</summary>${lkHistoryList(s)}</details>
+      ${lk.session === s ? `<button class="btn coral" data-lk="again">Nytt spill med samme lag</button>` : ""}
+      <button class="btn ghost wide" data-lk="${lk.session === s ? "home" : "overlay-close"}">${lk.session === s ? "Til Lagkamp-start" : "Lukk"}</button>`;
+  }
+  function lkHistoryList(s) {
+    const hist = LK.history(s);
+    if (!hist.length) return `<p class="hint">Ingen ferdige spørsmål ennå.</p>`;
+    return `<ol class="lk-hist">${hist.map((h) => {
+      const q = h.question;
+      if (h.status === "skipped") return `<li><p class="lk-h-top">Runde ${h.roundNo} · ${esc(q.typeName)}</p><p>${esc(q.prompt.title)}</p><p class="hint">Hoppet over – ingen poeng, ingen fasit.</p></li>`;
+      const rv = h.reveal, o = rv.outcome;
+      const log = h.log.map((e) => e.type === "uncorrect" ? "Angret siste rettelse." : e.mode === "auto" ? "Tilbake til automatisk resultat." : `Rettet: ${e.teams.length ? lkTeams(s, e.teams) : "ingen lag"} får poeng${e.reason ? ` («${esc(e.reason)}»)` : ""}.`);
+      return `<li><p class="lk-h-top">Runde ${h.roundNo} · ${esc(q.typeName)}</p><p>${esc(q.prompt.title)}</p>
+        ${q.prompt.quote ? `<p class="lk-h-quote">«${esc(q.prompt.quote)}»</p>` : ""}
+        <p class="hint">${rv.lines.map(esc).join(" ")}</p>
+        <ul class="lk-h-ans">${rv.teams.map((t) => `<li>${lkTeam(lkTeamOf(s, t.teamId))}: ${lkOptLabel(q, t.optionId)}${t.point ? " <b>+1</b>" : ""}</li>`).join("")}</ul>
+        ${log.length ? `<p class="lk-corrected">${log.join(" ")}</p>` : ""}
+        ${o.status === "revealed" && lk.session === s ? `<button class="link" data-lk="correct-open" data-v="${h.questionId}" data-back="score">Rett poeng</button>` : ""}</li>`;
+    }).join("")}</ol>`;
+  }
+
+  function lkOverlayHtml() {
+    const o = lk.overlay, s = lk.session;
+    const back = `<button class="btn ghost wide" data-lk="overlay-close">Avbryt</button>`;
+    if (o.kind === "score") {
+      return lkHead("📊 Poengtavle") + lkScoreStrip(s) + `<p class="hint">Bare ferdige spørsmål vises. Ingen fremtidige svar.</p>${lkHistoryList(s)}
+        <button class="btn coral" data-lk="overlay-close">Tilbake til spillet</button>`;
+    }
+    if (o.kind === "last") return lkHead("🏆 Siste resultat") + lkResultHtml(o.session);
+    if (o.kind === "zoom") {
+      const v = LK.view(s), cap = v.reveal && v.question.mediaId === o.id ? v.reveal.lines[0] : "";
+      return lkHead("Bildet") + `<div class="lk-zoom"><img src="${lkUrl(o.id) || ""}" alt="Bilde til spørsmål ${v.index + 1}" data-lk-img="${esc(o.id)}">${cap ? `<p>${esc(cap)}</p>` : ""}</div>
+        <button class="btn coral" data-lk="overlay-close">Lukk bildet</button>`;
+    }
+    if (o.kind === "correct") {
+      const q = s.questions[o.qid], out = LK.outcome(s, o.qid), pub = LK.history(s).find((h) => h.questionId === o.qid);
+      const differs = !(o.sel.length === out.auto.length && o.sel.every((id) => out.auto.includes(id)));
+      return lkHead("Rett poeng") + `<p class="lk-h-top">${esc(pub.question.typeName)}</p><p>${esc(q.prompt.title)}</p>
+        <p class="hint">Automatisk resultat etter fasiten: ${out.auto.length ? lkTeams(s, out.auto) : "ingen lag"}. Velg hvilke lag som skal ha dette spørsmålets ene poeng. Valget erstatter resultatet – det legges ikke oppå.</p>
+        <p class="lk-label">Lag som får poeng</p>
+        <div class="lk-toggles">${s.teams.map((t) => `<button class="quiz-opt ${o.sel.includes(t.teamId) ? "lk-picked" : ""}" data-lk="corr-team" data-v="${t.teamId}" aria-pressed="${o.sel.includes(t.teamId)}">${o.sel.includes(t.teamId) ? "✓ " : ""}${lkTeam(t)}</button>`).join("")}</div>
+        <div class="row lk-row"><button class="btn ghost" data-lk="corr-all">Alle</button><button class="btn ghost" data-lk="corr-none">Ingen</button></div>
+        <label class="field"><span>Kort grunn${differs ? " (må fylles ut når poengene avviker fra fasiten)" : ""}</span>
+          <input class="input" data-lk-input="reason" maxlength="${LK.LIMITS.reason}" value="${esc(o.reason)}" placeholder="F.eks. uklart bilde eller feiltrykk" autocomplete="off"></label>
+        ${o.error ? `<p class="error" role="alert">${esc(o.error)}</p>` : ""}
+        <button class="btn coral" data-lk="corr-save">Lagre poengene</button>
+        ${out.corrected ? `<button class="btn ghost wide" data-lk="corr-auto">Bruk automatisk resultat</button>` : ""}
+        ${out.corrections ? `<button class="btn ghost wide" data-lk="corr-undo">Angre siste rettelse</button>` : ""}
+        ${back}`;
+    }
+    if (o.kind === "more") {
+      return lkHead("Mer") + `${o.skip ? `<button class="btn ghost wide" data-lk="ask-skip">Hopp over spørsmålet for alle lag</button>
+          <p class="filter-note">Ingen får poeng, og fasiten vises ikke. Poeng fra før beholdes. Et lag som bare ikke vil svare, bruker «Pass».</p>` : ""}
+        <button class="btn ghost wide" data-lk="pause">Pause og lagre</button>
+        <button class="btn ghost wide" data-lk="ask-finish">Avslutt kampen med resultat så langt</button>${back}`;
+    }
+    const confirm = (title, text, yes, act) => lkHead(title) + `<p>${text}</p><button class="btn coral" data-lk="${act}">${yes}</button>${back}`;
+    if (o.kind === "ask-skip") return confirm("Hoppe over?", "Spørsmålet annulleres for alle lag, også dem som har svart. Ingen får poeng, og fasiten vises ikke.", "Ja, hopp over", "skip");
+    if (o.kind === "ask-finish") return confirm("Avslutte kampen?", "Resultatet så langt blir sluttresultatet og merkes som avsluttet tidlig. Det kan ikke fortsettes etterpå.", "Ja, avslutt kampen", "finish");
+    if (o.kind === "ask-new") return confirm("Starte nytt spill?", "Spillet som pågår avsluttes, og resultatet så langt lagres som siste resultat.", "Ja, avslutt og start nytt", "new-over");
+    if (o.kind === "ask-clear-bad") return confirm("Slette spillet som ikke kan leses?", "Det kan ikke gjenopprettes. Etterpå kan du starte et nytt spill.", "Ja, slett og start nytt", "clear-bad");
+    return "";
+  }
+
+  // ── Taps and typing ────────────────────────────────────────
+  async function lkClick(ds) {
+    const a = ds.lk, s = lk.session;
+    const ex = { expect: lkExpect(ds) };
+    switch (a) {
+      case "open": lkOpen(); return;
+      case "menu": lkClose(); state.quiz = null; state.sheet = "quiz"; guardSheet(); render(); return;
+      case "home": lk.view = "home"; lk.overlay = null; guardSheet(); lkLoadHome(); return;
+      case "notice-ok": lk.notice = ""; lkRender(); return;
+      case "new": lkStartSetup(lk.home && lk.home.last); return;
+      case "again": lkStartSetup(lk.session); return;
+      case "ask-new": case "ask-clear-bad": case "ask-skip": case "ask-finish":
+        lk.overlay = { kind: a, back: lk.overlay }; guardSheet(); lkRender(true); return;
+      case "new-over": {
+        const live = lk.home && lk.home.live;
+        if (live && (!lk.session || lk.session.sessionId !== live.sessionId)) Object.assign(lk, { session: live, saved: live.revision, save: "saved" });
+        const ended = lk.session;
+        if (ended && lkLive(ended)) lkDo("finish", {}, { quiet: true });
+        await lkChain;
+        lkStartSetup(ended);
+        return;
+      }
+      case "clear-bad":
+        for (const b of (lk.home && lk.home.bad) || []) if (b.id) await LKS.remove(b.id).catch(() => {});
+        lkStartSetup(null);
+        return;
+      case "continue": {
+        const live = lk.home && lk.home.live;
+        if (!live) return;
+        if (!lk.session || lk.session.sessionId !== live.sessionId) {
+          lkReleaseImages();
+          Object.assign(lk, { session: live, saved: live.revision, save: "saved", media: [], blobs: {} });
+        }
+        Object.assign(lk, { view: "game", covered: true, pick: null, overlay: null });
+        if (lk.session.status === "paused") lkDo("resume");
+        else { guardSheet(); lkRender(true); }
+        return;
+      }
+      case "show-last": lk.overlay = { kind: "last", session: lk.home.last }; guardSheet(); lkRender(true); return;
+      case "overlay-close": lk.overlay = lk.overlay && lk.overlay.back && lk.overlay.back.kind ? lk.overlay.back : null; guardSheet(); lkRender(true); return;
+      // Team setup
+      case "team-count": lk.setup.count = Number(ds.v); for (const k of Object.keys(lk.setup.assign)) if (lk.setup.assign[k] >= lk.setup.count) lk.setup.assign[k] = -1;
+        for (const g of lk.setup.guests) if (g.team >= lk.setup.count) g.team = -1; lkRender(); return;
+      case "guest-add": {
+        const name = lk.setup.guestDraft.trim();
+        if (!name) return;
+        lk.setup.guests.push({ name, team: -1 });
+        lk.setup.guestDraft = "";
+        lkRender();
+        root.querySelector(`[data-lk-input="guest-team"][data-i="${lk.setup.guests.length - 1}"]`)?.focus();
+        return;
+      }
+      case "guest-rm": lk.setup.guests.splice(Number(ds.v), 1); lkRender(); return;
+      case "teams-next": {
+        lk.setup.tried = true;
+        // Guests out of the game are simply not playing.
+        lk.setup.guests = lk.setup.guests.filter((g) => g.team >= 0 || g.name.trim());
+        if (LK.checkTeams(lkSetupTeams(lk.setup), FAMILY).length) { lkRender(); root.querySelector(".lk-errors")?.scrollIntoView({ block: "center" }); return; }
+        lk.view = "options"; guardSheet(); lkRender(true); lkPrepare(); return;
+      }
+      case "back-teams": lkGen++; lk.prep = null; lk.view = "teams"; guardSheet(); lkRender(true); return;
+      case "q-count": lk.setup.settings.count = Number(ds.v); lkBuild(); lkRender(); return;
+      case "prep-retry": lkPrepare(); return;
+      case "no-photos": lk.setup.settings.types = lk.setup.settings.types.filter((t) => !LK_PHOTO_TYPES.includes(t)); lkBuild(); lkRender(); return;
+      case "start": lkStart(); return;
+      // Playing
+      case "ready":
+        // Back from the background or a reload: the same team opens its screen again, nothing is logged.
+        if (lk.covered && s && LK.view(s).phase === "answering") { lk.covered = false; guardSheet(); lkRender(true); return; }
+        lkDo(a, ex); return;
+      case "begin": case "reveal": case "next": case "resume": lkDo(a, ex); return;
+      case "unlock": lkDo("unlock", ex); return;
+      case "pick": if (s && LK.view(s).phase === "answering") { lk.pick = ds.v; lkRender(); root.querySelector(`[data-lk="pick"][data-v="${ds.v}"]`)?.focus(); } return;
+      case "lock": if (lk.pick) lkDo("lock", { ...ex, optionId: lk.pick }); return;
+      case "pass": lkDo("lock", { ...ex, optionId: null }); return;
+      case "skip": lkDo("skip"); return;
+      case "pause": lkDo("pause"); return;
+      case "finish": lkDo("finish"); return;
+      case "more": lk.overlay = { kind: "more", skip: ds.skip === "1" }; guardSheet(); lkRender(true); return;
+      case "score": lk.overlay = { kind: "score" }; guardSheet(); lkRender(true); return;
+      case "zoom": lk.overlay = { kind: "zoom", id: ds.v }; guardSheet(); lkRender(true); return;
+      case "img-retry": URL.revokeObjectURL(lk.urls[ds.v] || ""); delete lk.urls[ds.v]; delete lk.blobs[ds.v]; delete lk.imgErr[ds.v]; lkRender(); return;
+      case "save-retry": await lkPersist(); lkRender(); return;
+      case "save-temp": lk.tempOk = true; lk.save = "memory"; lkRender(true); return;
+      // Corrections
+      case "correct-open": {
+        const out = LK.outcome(s, ds.v);
+        lk.overlay = { kind: "correct", qid: ds.v, sel: [...out.teams], reason: "", error: "", back: ds.back === "score" ? { kind: "score" } : null };
+        guardSheet(); lkRender(true); return;
+      }
+      case "corr-team": { const o = lk.overlay; o.sel = o.sel.includes(ds.v) ? o.sel.filter((x) => x !== ds.v) : [...o.sel, ds.v]; lkRender(); return; }
+      case "corr-all": lk.overlay.sel = s.teams.map((t) => t.teamId); lkRender(); return;
+      case "corr-none": lk.overlay.sel = []; lkRender(); return;
+      case "corr-save": case "corr-auto": case "corr-undo": {
+        const o = lk.overlay;
+        const back = o.back;
+        const action = a === "corr-undo" ? ["uncorrect", { questionId: o.qid }] : a === "corr-auto" ? ["correct", { questionId: o.qid, mode: "auto" }]
+          : ["correct", { questionId: o.qid, teams: o.sel, reason: o.reason }];
+        if (a === "corr-save") {
+          const cur = LK.outcome(s, o.qid).teams;
+          if (cur.length === o.sel.length && cur.every((x) => o.sel.includes(x))) { lk.overlay = back; guardSheet(); lkRender(true); return; }
+        }
+        if (lkDo(action[0], action[1], { keepOverlay: true })) { lk.overlay = back; lkRender(true); toast("Poengene er oppdatert"); }
+        return;
+      }
+    }
   }
 
   // ── Holiday postcard ───────────────────────────────────────
@@ -1790,7 +2594,10 @@
   root.addEventListener("click", (e) => {
     const t = e.target.closest("button, .backdrop, [data-act=logo]");
     if (!t || t.disabled) return;
+    // A tap right after a game screen changed is the second half of a double tap.
+    if (e.detail && Date.now() < sheetGuardUntil && t.closest(".sheet")) return;
     const ds = t.dataset;
+    if (ds.lk) { lkClick(ds); return; }
     if (ds.pick) {
       Object.assign(login, { mode: isRegistered(ds.pick) ? "pin" : "new", name: ds.pick, error: "" });
       drawLogin();
@@ -1863,6 +2670,11 @@
       case "quizmenu": state.quiz = null; render(); break;
       case "qnext": quizNext(); break;
       case "postcard": openSheet("postcard"); break;
+      case "variant": openVariant(state.sheet); break;
+      case "variant-save": saveVariant(); break;
+      case "variant-ask-delete": state.draft.confirmDelete = true; render(); break;
+      case "variant-keep": state.draft.confirmDelete = false; render(); break;
+      case "variant-delete": removeVariant(state.sheet); break;
       case "logo": {
         const now = Date.now();
         logoTaps = [...logoTaps.filter((x) => now - x < 1500), now];
@@ -1872,7 +2684,11 @@
     }
   });
 
-  root.addEventListener("error", (e) => { if (e.target.classList?.contains("pc-photo")) e.target.closest(".pc-fig")?.remove(); }, true);
+  root.addEventListener("error", (e) => {
+    if (e.target.classList?.contains("pc-photo")) e.target.closest(".pc-fig")?.remove();
+    const id = e.target.dataset?.lkImg;
+    if (id && !lk.imgErr[id]) { lk.imgErr[id] = true; render(); }
+  }, true);
 
   root.addEventListener("submit", (e) => {
     const form = e.target.closest("form[data-form]");
@@ -1883,6 +2699,24 @@
 
   root.addEventListener("change", async (e) => {
     const el = e.target;
+    if (state.sheet === "lagkamp" && lk.setup && (el.dataset.lkInput === "assign" || el.dataset.lkInput === "guest-team")) {
+      const team = Number(el.value);
+      if (el.dataset.lkInput === "assign") lk.setup.assign[el.dataset.name] = team; else lk.setup.guests[Number(el.dataset.i)].team = team;
+      const sel = el.dataset.lkInput === "assign" ? `[data-lk-input="assign"][data-name="${CSS.escape(el.dataset.name)}"]` : `[data-lk-input="guest-team"][data-i="${el.dataset.i}"]`;
+      lkRender();
+      root.querySelector(sel)?.focus();
+      return;
+    }
+    if (state.sheet === "lagkamp" && lk.setup && el.dataset.lkSet) {
+      const set = lk.setup.settings, k = el.dataset.lkSet;
+      if (k === "type") set.types = el.checked ? LK.TYPES.filter((t) => t === el.dataset.v || set.types.includes(t)) : set.types.filter((t) => t !== el.dataset.v);
+      else if (k === "menuReserve") set.menuReserve = el.checked;
+      else set[k] = el.value;
+      lkBuild();
+      lkRender();
+      root.querySelector(k === "type" ? `[data-lk-set="type"][data-v="${el.dataset.v}"]` : `[data-lk-set="${k}"]`)?.focus();
+      return;
+    }
     if (state.tableSetup && !state.tableGame) {
       const key = el.dataset.gameSelect || el.dataset.gameCheck;
       if (key) {
@@ -1908,14 +2742,25 @@
 
   root.addEventListener("input", (e) => {
     const el = e.target;
+    if (el.dataset.lkInput && state.sheet === "lagkamp") {
+      if (el.dataset.lkInput === "team-name" && lk.setup) lk.setup.names[Number(el.dataset.i)] = el.value;
+      if (el.dataset.lkInput === "guest-draft" && lk.setup) lk.setup.guestDraft = el.value;
+      if (el.dataset.lkInput === "reason" && lk.overlay) lk.overlay.reason = el.value;
+      return;
+    }
     if (el.name === "pin" || el.name === "pin2") { el.value = el.value.replace(/\D/g, "").slice(0, 4); return; }
+    if ((el.name === "vname" || el.name === "vingr") && state.variant) { state.variant[el.name === "vname" ? "name" : "ingredients"] = el.value; return; }
     if (el.name === "q") { state.q = el.value; updateResults(); }
     else if (el.name === "comment" && state.draft) state.draft.comment = el.value;
     else return;
     checkEggs(el.name, el.value);
   });
 
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.sheet) closeSheet(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !state.sheet) return;
+    if (state.sheet === "lagkamp" && lk.overlay) { lk.overlay = lk.overlay.back && lk.overlay.back.kind ? lk.overlay.back : null; lkRender(true); return; }
+    closeSheet();
+  });
 
   function updateResults() {
     const el = document.getElementById("results");
@@ -1928,7 +2773,15 @@
   window.addEventListener("scroll", onScroll, { passive: true });
 
   // Keep everyone's ratings fresh without a manual reload.
+  // A team's private answer screen is covered before the app comes back to the front.
+  function lkCover() {
+    if (state.sheet !== "lagkamp" || !lk.session || lk.covered || LK.view(lk.session).phase !== "answering") return;
+    Object.assign(lk, { covered: true, pick: null });
+    render();
+  }
+  window.addEventListener("pagehide", lkCover);
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) lkCover();
     if (document.hidden && state.tableGame?.kind === "pitch" && GAMES.pauseTimer(state.tableGame)) { stopTableClock(); render(); }
     if (!document.hidden && !state.sheet) refresh();
   });

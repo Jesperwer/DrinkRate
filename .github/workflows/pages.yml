@@ -67,6 +67,9 @@ jobs:
             CODE=$(call $fn "$ZERO")
             if [ "$CODE" = "200" ] && grep -q BAD_TOKEN body.txt; then echo "$fn OK"; else echo "::error::$fn answered HTTP $CODE without BAD_TOKEN. Run the SQL files in supabase/."; FAIL=1; fi
           done
+          # Family variants are optional: the site hides the button until custom_drinks.sql is run.
+          CODE=$(call dr_list_custom_drinks "$ZERO")
+          if [ "$CODE" = "200" ] && grep -q BAD_TOKEN body.txt; then echo "dr_list_custom_drinks OK"; else echo "::warning::dr_list_custom_drinks answered HTTP $CODE. Run supabase/custom_drinks.sql to turn on family variants."; fi
           # An invalid PIN never creates a user; the answer says whether registration is closed.
           CODE=$(call dr_register '{"p_name":"x","p_pin":"no"}')
           if grep -q REGISTRATION_CLOSED body.txt; then echo "Registration closed"; else echo "::warning::Registration is still open. Run supabase/security_holiday.sql when the whole family can log in."; fi

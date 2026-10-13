@@ -58,6 +58,8 @@ module.exports = async function tableGames(p, out) {
   await p.click('[data-act="pitch-replace"]');
   assert.notEqual(await p.locator('[data-game-drink]').getAttribute("data-game-drink"), pitchDrink);
   await p.clock.install();
+  // With the clock stopped, the short tap guard after each step only ends when time moves on.
+  const afterGuard = async (sel) => { await p.clock.runFor(500); await p.click(sel); };
   await p.click('[data-act="pitch-start"]');
   await p.clock.fastForward(5000);
   await p.click('[data-act="pitch-pause"]');
@@ -71,24 +73,40 @@ module.exports = async function tableGames(p, out) {
   await p.getByText("Tid for å stemme!", { exact: true }).waitFor();
   assert.ok(await p.locator('[data-act="pitch-score"]').isDisabled());
   await p.click('[data-pitch-votes="1"]');
-  await p.click('[data-act="pitch-score"]');
+  await afterGuard('[data-act="pitch-score"]');
   await p.getByText("Jesper fikk 1 poeng!", { exact: true }).waitFor();
-  await p.click('[data-act="pitch-next"]');
+  await afterGuard('[data-act="pitch-next"]');
   await p.getByText("Astri, overbevis Jesper!", { exact: true }).waitFor();
-  await p.click('[data-act="pitch-skip"]');
-  await p.click('[data-act="pitch-next"]');
+  await afterGuard('[data-act="pitch-skip"]');
+  await afterGuard('[data-act="pitch-next"]');
   await p.getByText("Jesper vant!", { exact: true }).waitFor();
   assert.equal(await p.locator(".pitch-results li").count(), 2);
   assert.equal(await p.locator(".pitch-score").last().textContent(), "AstriHoppet over");
   await p.screenshot({ path: `${out}/29-pitch-result.png` });
   assert.equal(await p.evaluate(() => document.querySelector(".sheet").scrollWidth > innerWidth), false, "results fit 320 px");
-  await p.click('[data-act="table-again"]');
-  await p.click('[data-act="table-start"]');
-  await p.click('[data-act="pitch-start"]');
-  await p.click(".sheet .close");
+  await afterGuard('[data-act="table-again"]');
+  await afterGuard('[data-act="table-start"]');
+  await afterGuard('[data-act="pitch-start"]');
+  await afterGuard(".sheet .close");
   await p.clock.fastForward(25000);
   assert.equal(await p.locator(".sheet").count(), 0, "closing cancels the timer");
   await p.clock.resume();
+  // A fast double tap on "Hopp over turen" skips one turn; it must not hit the button drawn
+  // in its place afterwards (known v12 issue: it ended the whole game).
+  await p.click('[data-tab="family"]');
+  await p.click('[data-act="quiz"]');
+  await p.click('[data-table="pitch"]');
+  await p.click('[data-act="table-start"]');
+  await p.locator(".sheet:not(.guard)").waitFor();
+  await p.locator('[data-act="pitch-skip"]').scrollIntoViewIfNeeded();
+  const skip = await p.locator('[data-act="pitch-skip"]').boundingBox();
+  await p.touchscreen.tap(skip.x + skip.width / 2, skip.y + skip.height / 2);
+  await p.waitForTimeout(60);
+  await p.touchscreen.tap(skip.x + skip.width / 2, skip.y + skip.height / 2);
+  await p.waitForTimeout(600);
+  await p.getByText("Turen er hoppet over", { exact: true }).waitFor();
+  assert.equal(await p.locator('[data-act="pitch-next"]').count(), 1, "still in the game after a double tap");
+  await p.click(".sheet .close");
   await p.click('[data-tab="swipe"]');
   await p.locator(`.list [data-drink="${winner}"]`).waitFor();
   await p.click('[data-tab="list"]');
