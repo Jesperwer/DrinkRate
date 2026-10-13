@@ -9,6 +9,7 @@
   const DRINK = Object.fromEntries(DRINKS.map((d) => [d.id, d]));
   const INS = window.DR_INSIGHTS;
   const QZ = window.DR_QUIZ;
+  const GAMES = window.DR_GAMES;
   // Holiday features are off unless switched on in config.js.
   const on = (f) => !!(CFG.features && CFG.features[f]);
   const BDAY = CFG.birthday || null;
@@ -311,6 +312,7 @@
     bar: "all",
     cat: "all",
     aiOnly: false,
+    untestedOnly: false,
     q: "",
     topCat: "all",
     sheet: null, // drink id | "menu" | "person:<name>"
@@ -320,6 +322,8 @@
     lastSync: null, // time of the last successful load
     stale: false, // a later reload failed; showing data from lastSync
     quiz: null, // the running quiz round
+    tableSetup: null,
+    tableGame: null,
   };
   // True while `token` is still the logged-in session, so answers that arrive
   // after logging out or switching person are dropped.
@@ -406,6 +410,7 @@
   }
 
   function logout() {
+    clearTableGame();
     saveSession(null);
     state.ratings = [];
     state.sheet = null;
@@ -420,7 +425,7 @@
     lastSwipe = null;
     Object.assign(session, { swipes: 0, likes: [] });
     document.body.style.overflow = "";
-    Object.assign(state, { tab: "list", bar: "all", cat: "all", aiOnly: false, q: "", topCat: "all",
+    Object.assign(state, { tab: "list", bar: "all", cat: "all", aiOnly: false, untestedOnly: false, q: "", topCat: "all",
       loaded: false, loadError: false, stale: false, lastSync: null, quiz: null, pick: null });
     renderLogin();
   }
@@ -672,8 +677,12 @@
     return `${birthdayBanner()}${hero()}
       <div class="search">${ICONS.search}<input class="input" name="q" type="search" placeholder="Søk blant ${DRINKS.length} drinker" value="${esc(state.q)}" autocomplete="off" enterkeyhint="search"></div>
       ${chips(cats, state.cat, "cat")}
+      <div class="chips tight list-toggles" aria-label="Ekstra filtre">
+        <button class="chip toggle ${state.untestedOnly ? "on" : ""}" data-act="untested" aria-pressed="${state.untestedOnly}">✨ Ikke testet</button>
+        <button class="chip toggle ${state.aiOnly ? "on" : ""}" data-act="aionly" aria-pressed="${state.aiOnly}"><em>✦</em>Kun all inclusive</button>
+      </div>
+      ${state.untestedOnly ? `<p class="filter-note">Viser drinker du ikke har gitt karakter til ennå.</p>` : ""}
       <div class="chips">
-        <button class="chip toggle ${state.aiOnly ? "on" : ""}" data-act="aionly"><em>✦</em>Kun all inclusive</button>
         ${[{ id: "all", name: "Alle barer" }, ...BARS].map((b) =>
           `<button class="chip ${state.bar === b.id ? "on" : ""}" data-bar="${b.id}">${esc(b.name)}</button>`).join("")}
       </div>
@@ -681,13 +690,9 @@
   }
 
   function filtered() {
-    const q = norm(state.q);
-    return DRINKS.filter((d) =>
-      (state.bar === "all" || d.bars.includes(state.bar)) &&
-      (state.cat === "all" || d.cat === state.cat) &&
-      (!state.aiOnly || (state.bar === "all" ? d.ai.length : d.ai.includes(state.bar))) &&
-      (!q || norm(d.name + " " + d.desc).includes(q)));
+    return GAMES.filterDrinks(DRINKS, state, myRatedIds());
   }
+  const myRatedIds = () => new Set(personRatings(state.session.name).map((r) => r.drink));
 
   function listResults() {
     const hits = filtered();
@@ -794,7 +799,7 @@
         <small>${a.v}</small></div>`).join("")}</div>`;
     }
     html += controversySection();
-    if (on("quiz")) html += `<button class="game-btn" data-act="quiz"><span>🎲</span><span><b>Familiespill</b><small>Hvem skrev det? · Gjett karakteren</small></span></button>`;
+    if (on("quiz") || on("tableGames")) html += `<button class="game-btn" data-act="quiz"><span>🎲</span><span><b>Familiespill</b><small>${on("tableGames") ? "Menyduellen · Selg meg drinken · Quiz" : "Hvem skrev det? · Gjett karakteren"}</small></span></button>`;
     html += `<div class="section-title"><h2>Smakerne</h2><small>Trykk for å se alt</small></div><div class="people-list">`;
     for (const name of people()) {
       const rs = personRatings(name);
@@ -979,6 +984,7 @@
 
   // ── Sheet ──────────────────────────────────────────────────
   function openDrink(id) {
+    clearTableGame();
     const mine = myRating(derived().byDrink[id]);
     const d = DRINK[id];
     state.sheet = id;
@@ -1006,6 +1012,7 @@
   }
   function closeSheet() {
     if (state.sheet === "quiz") state.quiz = null;
+    clearTableGame();
     state.sheet = null;
     state.draft = null;
     document.body.style.overflow = "";
@@ -1027,6 +1034,7 @@
     }
     if (state.sheet === "pick") return pickHtml();
     if (state.sheet === "quiz") return quizHtml();
+    if (state.sheet === "tablegame") return tableGameHtml();
     if (state.sheet === "postcard") return postcardHtml();
     if (state.sheet.startsWith("twin:")) return twinHtml(state.sheet.slice(5));
     if (state.sheet.startsWith("person:")) {
@@ -1414,8 +1422,12 @@
     if (!r) {
       return sheetWrap(head + `<p class="hint">Spill sammen rundt bordet. Ingen trenger å bestille noe – poengene gjelder bare denne telefonen.</p>
         <div class="game-modes">
+          ${on("tableGames") ? `<button class="game-mode" data-table="duel"><span>🏆</span><span><b>Menyduellen</b><small>Pek, diskuter og kår bordets neste favoritt.</small></span></button>
+          <button class="game-mode" data-table="pitch"><span>🎤</span><span><b>Selg meg drinken</b><small>20 sekunder, en drink og din beste salgstale.</small></span></button>` : ""}
+          ${on("quiz") ? `
           <button class="game-mode" data-quiz="who"><span>🕵️</span><span><b>${QUIZ_NAMES.who}</b><small>Hvem i familien skrev kommentaren? Fylles opp med menyspørsmål.</small></span></button>
           <button class="game-mode" data-quiz="score"><span>🔢</span><span><b>${QUIZ_NAMES.score}</b><small>Hvilken karakter ga de andre?</small></span></button>
+          ` : ""}
         </div>`, "Familiespill");
     }
     if (r.done) {
@@ -1446,6 +1458,162 @@
       <div class="quiz-opts ${q.type === "score" ? "nums" : ""}">${opts}</div>
       ${picked === undefined ? "" : `<p class="quiz-fb">${picked === q.answer ? "Riktig! 🎉" : `Feil – riktig svar er ${esc(q.options[q.answer])}`}</p>
         <button class="btn coral" data-act="qnext">${last ? "Se resultatet" : "Neste"}</button>`}`, "Familiespill");
+  }
+
+  // ── Table games: one phone, spoken votes, no database writes ─
+  let tableClock = null;
+  const TABLE_NAMES = { duel: "Menyduellen", pitch: "Selg meg drinken" };
+  function stopTableClock() { clearInterval(tableClock); tableClock = null; }
+  function clearTableGame() {
+    stopTableClock();
+    state.tableGame = null;
+    state.tableSetup = null;
+  }
+  function tableRender(focus = ".table-heading", resetScroll = true) {
+    render();
+    const sheet = root.querySelector(".sheet");
+    if (resetScroll && sheet) sheet.scrollTop = 0;
+    sheet?.querySelector(focus)?.focus({ preventScroll: true });
+  }
+  function setupTableGame(kind) {
+    if (!on("tableGames") || !TABLE_NAMES[kind]) return;
+    clearTableGame();
+    state.tableSetup = { kind, options: { bar: state.bar, cat: state.cat, aiOnly: state.aiOnly, untestedOnly: true }, players: [...FAMILY] };
+    openSheet("tablegame");
+    tableRender();
+  }
+  const tablePool = () => GAMES.filterDrinks(DRINKS, state.tableSetup.options, myRatedIds());
+  function startTableGame() {
+    const s = state.tableSetup;
+    if (!s) return;
+    state.tableGame = s.kind === "duel" ? GAMES.newDuel(tablePool()) : GAMES.newPitch(tablePool(), s.players);
+    if (!state.tableGame) { toast("Velg flere drinker eller færre deltakere"); return; }
+    tableRender();
+  }
+  function tableMenu() { clearTableGame(); state.quiz = null; openSheet("quiz"); }
+  function wishGameDrink(id) {
+    if (!DRINK[id] || myRatedIds().has(id)) return;
+    const wishes = store.get("wish", []);
+    if (!wishes.includes(id)) store.set("wish", [id, ...wishes]);
+    toast("Lagt i din ønskeliste");
+    tableRender(`[data-game-wish="${id}"]`, false);
+  }
+  function gameWish(id) {
+    if (myRatedIds().has(id)) return `<p class="filter-note">Du har allerede gitt denne en karakter.</p>`;
+    const saved = store.get("wish", []).includes(id);
+    return `<button class="btn ghost wide" data-game-wish="${id}" ${saved ? "disabled" : ""}>${saved ? "✓ I din ønskeliste" : "♡ Legg i min ønskeliste"}</button>`;
+  }
+  function gameDrink(id) {
+    const d = DRINK[id], bar = state.tableSetup.options.bar;
+    const included = bar === "all" ? d.ai.length > 0 : d.ai.includes(bar);
+    return `<div class="table-drink" data-game-drink="${id}"><span class="table-emoji" aria-hidden="true">${drinkEmoji(d)}</span>
+      <h3>${esc(d.name)}</h3><p>${esc(d.desc)}</p>
+      <p class="table-meta">${esc(CAT[d.cat].name)} · ${included ? `✦ All inclusive${bar === "all" ? `: ${esc(barNames(d.ai))}` : ""}` : `Ikke inkludert${d.price ? ` · ${esc(d.price)}` : ""}`}</p>
+      <p class="table-meta">${esc(barNames(d.bars))}</p></div>`;
+  }
+  function tableSetupHtml() {
+    const s = state.tableSetup, pool = tablePool(), duel = s.kind === "duel";
+    const n = duel ? GAMES.duelSize(pool.length) : s.players.length;
+    const ready = duel ? n > 0 : n >= 2 && pool.length >= n;
+    const select = (key, label, options) => `<label class="field"><span>${label}</span><select class="input" data-game-select="${key}">${options.map(([id, name]) => `<option value="${id}" ${s.options[key] === id ? "selected" : ""}>${esc(name)}</option>`).join("")}</select></label>`;
+    return `<p class="hint">${duel ? "Pek på favoritten samtidig. Flertallet bestemmer hvem som går videre. Ved uavgjort får dere 15 sekunder til å overtale hverandre – yngste deltaker avgjør om det fortsatt er likt." : "Velg dem som sitter ved bordet, i den rekkefølgen dere vil spille. Hver person får én drink og 20 sekunder til å overbevise neste deltaker. Etterpå stemmer resten med tommel opp eller ned."}</p>
+      <div class="table-filters">
+        ${select("bar", "Bar", [["all", "Alle barer"], ...BARS.map((b) => [b.id, b.name])])}
+        ${select("cat", "Kategori", [["all", "Alle kategorier"], ...CAT_ORDER.map((id) => [id, CAT[id].name])])}
+      </div>
+      <div class="table-checks">
+        <label><input type="checkbox" data-game-check="untestedOnly" ${s.options.untestedOnly ? "checked" : ""}> Ikke testet av deg</label>
+        <label><input type="checkbox" data-game-check="aiOnly" ${s.options.aiOnly ? "checked" : ""}> Kun all inclusive</label>
+      </div>
+      <p class="filter-note">«Ikke testet» betyr uten din karakter. Dere kan bytte ut drinker dere kjenner. Alkoholfritt, kaffe og te er også med.</p>
+      ${duel ? "" : `<fieldset class="table-players"><legend>Hvem er med? (${s.players.length})</legend>
+        <div class="chips tight">${FAMILY.map((name, i) => `<button class="chip ${s.players.includes(name) ? "on" : ""}" data-game-player="${i}" aria-pressed="${s.players.includes(name)}">${esc(name)}</button>`).join("")}</div>
+        <p class="filter-note">Rekkefølge: ${s.players.map(esc).join(" → ") || "Velg minst to"}</p></fieldset>`}
+      <p class="table-pool" role="status">${pool.length} drinker passer${duel && n ? ` · ${n} trekkes til duellen` : ""}.</p>
+      ${ready ? "" : `<p class="hint">${!duel && n < 2 ? "Velg minst to deltakere." : `For få drinker. Velg en annen bar/kategori eller slå av et filter${duel ? "." : ", eller velg færre deltakere."}`}</p>`}
+      <button class="btn coral" data-act="table-start" ${ready ? "" : "disabled"}>${duel ? "Start duellen" : "Start spillet"}</button>
+      <p class="filter-note">Én mobil er nok. Dere spiller med menyen – ingen bestilling er nødvendig.</p>`;
+  }
+  function duelHtml(g) {
+    if (g.done) return `<div class="table-result"><span class="quiz-big" aria-hidden="true">🏆</span><h3>Bordets vinner!</h3>${gameDrink(g.winner)}${gameWish(g.winner)}
+      <details class="table-history"><summary>Se veien til finalen</summary><ol>${g.history.map((h) => `<li>${h.pair.map((id) => esc(DRINK[id].name)).join(" mot ")} → <b>${esc(DRINK[h.winner].name)}</b></li>`).join("")}</ol></details>
+      <button class="btn coral" data-act="table-again">Spill igjen</button></div>`;
+    const stage = g.round.length === 2 ? "Finale" : g.round.length === 4 ? "Semifinale" : "Kvartfinale";
+    return `<p class="quiz-step">${stage} · duell ${g.match + 1} av ${g.round.length / 2}</p>
+      <p class="hint">Hvilken frister mest? Pek samtidig, og trykk på flertallets valg.</p>
+      <div class="table-duel">${GAMES.pair(g).map((id) => `<article class="table-candidate ${g.choice === id ? "chosen" : ""}">${gameDrink(id)}
+        <button class="btn ${g.choice === id ? "coral" : "ghost wide"}" data-duel-choice="${id}" ${g.choice !== null ? "disabled" : ""}>${g.choice === id ? "✓ Valgt" : "Velg denne"}</button>
+        ${g.round.length === g.size && g.choice === null ? `<button class="link" data-duel-replace="${id}" ${g.reserve.length ? "" : "disabled"}>${g.reserve.length ? "Kjenner den? Bytt drink" : "Ingen flere å bytte med"}</button>` : ""}</article>`).join("")}</div>
+      ${g.choice === null ? "" : `<p class="quiz-fb" role="status">${esc(DRINK[g.choice].name)} ${g.round.length === 2 ? "vinner!" : "går videre!"}</p>
+        <button class="btn coral" data-act="duel-next">${g.round.length === 2 ? "Se vinneren" : "Neste duell"}</button>
+        <button class="link" data-act="duel-repick">Velg på nytt</button>`}`;
+  }
+  function pitchHtml(g) {
+    if (g.done) {
+      const played = g.turns.filter((t) => !t.skipped);
+      const best = Math.max(0, ...played.map((t) => t.votes));
+      const winners = played.filter((t) => t.votes === best);
+      const title = !played.length ? "Alle turene ble hoppet over" : best === 0 ? "Ingen tomler opp denne gangen" : `${winners.map((t) => esc(t.name)).join(" og ")} ${winners.length === 1 ? "vant!" : "deler seieren!"}`;
+      return `<div class="table-result"><span class="quiz-big" aria-hidden="true">🎤</span><h3>${title}</h3><p class="hint">Poeng for salgstalen: én tommel opp = ett poeng.</p></div>
+        <ol class="pitch-results">${[...g.turns].sort((a, b) => b.votes - a.votes).map((t) => `<li><div class="pitch-score"><b>${esc(t.name)}</b><span>${t.skipped ? "Hoppet over" : `${t.votes} poeng`}</span></div>
+          <p>${esc(DRINK[t.drink].name)}</p>${gameWish(t.drink)}</li>`).join("")}</ol>
+        <button class="btn coral" data-act="table-again">Spill igjen</button>`;
+    }
+    const t = g.turns[g.i];
+    let controls;
+    if (g.phase === "scored") {
+      controls = `<p class="quiz-fb" role="status">${t.skipped ? "Turen er hoppet over" : `${esc(t.name)} fikk ${t.votes} poeng!`}</p>${gameWish(t.drink)}
+        <button class="btn coral" data-act="pitch-next">${g.i === g.turns.length - 1 ? "Se resultatet" : "Neste deltaker"}</button>`;
+    } else if (g.phase === "voting") {
+      controls = `<p class="quiz-prompt" role="status">Tid for å stemme!</p><p class="hint">Alle unntatt ${esc(t.name)} viser tommel opp eller ned. Hvor mange tomler opp fikk salgstalen?</p>
+        <div class="pitch-votes" aria-label="Antall tomler opp">${g.players.slice(0).map((_, n) => `<button class="quiz-opt ${g.votes === n ? "selected" : ""}" data-pitch-votes="${n}" aria-pressed="${g.votes === n}">${n}</button>`).join("")}</div>
+        <button class="btn coral" data-act="pitch-score" ${g.votes === null ? "disabled" : ""}>Lagre poeng</button>`;
+    } else {
+      controls = `<div class="pitch-clock"><strong class="pitch-seconds" role="timer" aria-label="Sekunder igjen">${Math.ceil(GAMES.timeLeft(g) / 1000)}</strong><span>sekunder${g.phase === "paused" ? " · pause" : ""}</span></div>
+        <button class="btn coral" data-act="${g.phase === "speaking" ? "pitch-pause" : "pitch-start"}">${g.phase === "speaking" ? "Pause" : g.phase === "paused" ? "Fortsett" : "Start 20 sekunder"}</button>
+        ${g.phase !== "ready" ? `<button class="btn ghost wide" data-act="pitch-finish">Klar – gå til avstemning</button>` : `<button class="link" data-act="pitch-replace" ${g.reserve.length ? "" : "disabled"}>${g.reserve.length ? "Bytt drink før du starter" : "Ingen flere å bytte med"}</button>`}`;
+    }
+    return `<p class="quiz-step">Tur ${g.i + 1} av ${g.turns.length}</p><p class="quiz-prompt">${esc(t.name)}, overbevis ${esc(t.target)}!</p>
+      ${gameDrink(t.drink)}${controls}
+      ${g.phase !== "scored" ? `<button class="link" data-act="pitch-skip">Hopp over turen</button>` : ""}`;
+  }
+  function tableGameHtml() {
+    const s = state.tableSetup;
+    if (!s) return quizHtml();
+    return sheetWrap(`<div class="sheet-head"><div class="sheet-title"><h2 class="table-heading" tabindex="-1">${s.kind === "duel" ? "🏆" : "🎤"} ${TABLE_NAMES[s.kind]}</h2></div>${closeBtn}</div>
+      ${state.tableGame ? state.tableGame.kind === "duel" ? duelHtml(state.tableGame) : pitchHtml(state.tableGame) : tableSetupHtml()}
+      <button class="btn ghost wide" data-act="table-menu">${state.tableGame && !state.tableGame.done ? "Avslutt og gå til spillmenyen" : "Til spillmenyen"}</button>`, TABLE_NAMES[s.kind]);
+  }
+  function armPitchClock() {
+    stopTableClock();
+    const g = state.tableGame;
+    tableClock = setInterval(() => {
+      if (state.sheet !== "tablegame" || state.tableGame !== g || g.phase !== "speaking") { stopTableClock(); return; }
+      const left = GAMES.timeLeft(g);
+      const el = root.querySelector(".pitch-seconds");
+      if (el) el.textContent = Math.ceil(left / 1000);
+      if (!left) { GAMES.finishSpeech(g); stopTableClock(); tableRender(); }
+    }, 200);
+  }
+  function tableAction(act) {
+    const g = state.tableGame;
+    if (act === "table-menu") { tableMenu(); return; }
+    if (act === "table-start") { startTableGame(); return; }
+    if (act === "table-again") { stopTableClock(); state.tableGame = null; tableRender(); return; }
+    if (!g) return;
+    if (g.kind === "duel") {
+      if (act === "duel-next") GAMES.advance(g);
+      if (act === "duel-repick" && !g.done) g.choice = null;
+    } else {
+      if (act === "pitch-start" && GAMES.startTimer(g)) { tableRender('[data-act="pitch-pause"]', false); armPitchClock(); return; }
+      if (act === "pitch-pause") { GAMES.pauseTimer(g); stopTableClock(); }
+      if (act === "pitch-finish") { GAMES.finishSpeech(g); stopTableClock(); }
+      if (act === "pitch-replace") GAMES.replacePitch(g);
+      if (act === "pitch-score") GAMES.scorePitch(g, g.votes);
+      if (act === "pitch-skip") { GAMES.scorePitch(g, 0, true); stopTableClock(); }
+      if (act === "pitch-next") GAMES.nextPitch(g);
+    }
+    tableRender();
   }
 
   // ── Holiday postcard ───────────────────────────────────────
@@ -1621,7 +1789,7 @@
 
   root.addEventListener("click", (e) => {
     const t = e.target.closest("button, .backdrop, [data-act=logo]");
-    if (!t) return;
+    if (!t || t.disabled) return;
     const ds = t.dataset;
     if (ds.pick) {
       Object.assign(login, { mode: isRegistered(ds.pick) ? "pin" : "new", name: ds.pick, error: "" });
@@ -1629,7 +1797,7 @@
       return;
     }
     if (ds.tab === "family") freshStickers();
-    if (ds.tab) { state.tab = ds.tab; state.sheet = null; document.body.style.overflow = ""; render(); window.scrollTo(0, 0); return; }
+    if (ds.tab) { clearTableGame(); state.tab = ds.tab; state.sheet = null; document.body.style.overflow = ""; render(); window.scrollTo(0, 0); return; }
     if (ds.bar) { state.bar = ds.bar; render(); return; }
     if (ds.cat) { state.cat = ds.cat; render(); return; }
     if (ds.topcat) { state.topCat = ds.topcat; render(); return; }
@@ -1639,6 +1807,19 @@
     if (ds.hint) { showHint(ds.hint); return; }
     if (ds.quiz) { if (state.sheet !== "quiz") openSheet("quiz"); startQuiz(ds.quiz); return; }
     if (ds.qa !== undefined) { if (state.quiz && QZ.answer(state.quiz, Number(ds.qa))) render(); return; }
+    if (ds.table) { setupTableGame(ds.table); return; }
+    if (ds.gamePlayer !== undefined && state.tableSetup && !state.tableGame) {
+      const name = FAMILY[Number(ds.gamePlayer)], s = state.tableSetup;
+      if (name) s.players = s.players.includes(name) ? s.players.filter((n) => n !== name) : [...s.players, name];
+      tableRender(`[data-game-player="${ds.gamePlayer}"]`, false); return;
+    }
+    if (ds.gameWish) { wishGameDrink(ds.gameWish); return; }
+    if (ds.duelChoice) { if (GAMES.choose(state.tableGame, ds.duelChoice)) tableRender('[data-act="duel-next"]', false); return; }
+    if (ds.duelReplace) { if (GAMES.replace(state.tableGame, ds.duelReplace)) tableRender(); return; }
+    if (ds.pitchVotes !== undefined && state.tableGame?.phase === "voting") {
+      state.tableGame.votes = Number(ds.pitchVotes); tableRender(`[data-pitch-votes="${ds.pitchVotes}"]`, false); return;
+    }
+    if (ds.act && /^(table-|duel-|pitch-)/.test(ds.act)) { tableAction(ds.act); return; }
     if (ds.photo) {
       const thumb = (recentPhotos || []).find((p) => p.drink === ds.photo && norm(p.name) === norm(ds.who))?.thumb;
       openLightbox(ds.photo, ds.who, thumb);
@@ -1675,6 +1856,7 @@
       case "pick": showPick(store.get("wish", [])); break;
       case "resetskip": store.set("skip", []); render(); break;
       case "aionly": state.aiOnly = !state.aiOnly; render(); break;
+      case "untested": state.untestedOnly = !state.untestedOnly; render(); break;
       case "surprise": surprise(); break;
       case "bday": EGGS.birthday(); setTimeout(render, 50); break;
       case "quiz": state.quiz = null; openSheet("quiz"); break;
@@ -1700,6 +1882,15 @@
   });
 
   root.addEventListener("change", async (e) => {
+    const el = e.target;
+    if (state.tableSetup && !state.tableGame) {
+      const key = el.dataset.gameSelect || el.dataset.gameCheck;
+      if (key) {
+        state.tableSetup.options[key] = el.dataset.gameCheck ? el.checked : el.value;
+        tableRender(`[data-game-${el.dataset.gameCheck ? "check" : "select"}="${key}"]`, false);
+        return;
+      }
+    }
     if (e.target.name !== "photo" || !state.draft) return;
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -1737,7 +1928,10 @@
   window.addEventListener("scroll", onScroll, { passive: true });
 
   // Keep everyone's ratings fresh without a manual reload.
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && !state.sheet) refresh(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && state.tableGame?.kind === "pitch" && GAMES.pauseTimer(state.tableGame)) { stopTableClock(); render(); }
+    if (!document.hidden && !state.sheet) refresh();
+  });
   setInterval(() => { if (!document.hidden && !state.sheet && state.session) refresh(); }, 60000);
 
   if (state.session && CFG.url && CFG.key) startApp();

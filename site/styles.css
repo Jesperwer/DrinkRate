@@ -169,6 +169,8 @@ main { padding-bottom: calc(110px + var(--safe-b)); animation: fadeup .35s ease 
 .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .chip.toggle.on { background: linear-gradient(135deg, var(--coral), var(--coral2)); color: #fff; border-color: transparent; }
 .chips.tight { flex-wrap: wrap; overflow: visible; padding: 0; margin: 0; }
+.chips.list-toggles { margin-bottom: 10px; }
+.filter-note { font-size: 12.5px; color: var(--muted); margin: 4px 0 12px; overflow-wrap: anywhere; }
 
 .section-title { display: flex; align-items: baseline; justify-content: space-between; margin: 20px 2px 10px; }
 .section-title h2 { font-size: 22px; }
@@ -741,6 +743,48 @@ button.sticker { width: 100%; }
 .quiz-done { text-align: center; padding: 10px 0 4px; }
 .quiz-big { display: block; font-size: 64px; }
 .quiz-done h3 { font-size: 24px; }
+
+/* One-phone table games */
+.table-heading:focus { outline: none; }
+.table-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.table-filters .field { min-width: 0; margin: 0; }
+.table-filters select { width: 100%; min-width: 0; font: inherit; }
+.table-checks { display: grid; gap: 4px; margin: 12px 0; }
+.table-checks label { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.table-checks input { width: 20px; height: 20px; accent-color: var(--sea); }
+.table-players { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.table-players legend { padding: 0 0 10px; font-weight: 700; }
+.table-players .chip { min-height: 44px; }
+.table-pool { color: var(--sea); font-weight: 700; margin: 14px 0; }
+.table-duel { display: grid; gap: 12px; margin-top: 12px; }
+.table-candidate { min-width: 0; padding: 14px; border: 2px solid var(--line); background: var(--card2); border-radius: 22px; }
+.table-candidate.chosen { border-color: var(--coral); background: var(--coral-soft); }
+.table-drink { padding: 12px 0; overflow-wrap: anywhere; }
+.table-drink h3 { font-size: 23px; line-height: 1.2; margin: 4px 0 8px; }
+.table-drink p { color: var(--ink2); margin: 6px 0; }
+.table-drink .table-meta { font-size: 12px; color: var(--muted); }
+.table-emoji { font-size: 32px; }
+.table-candidate .btn { margin-top: 8px; }
+.table-candidate .link { display: block; width: 100%; min-height: 44px; margin: 8px 0 0; }
+.table-result { text-align: center; }
+.table-result h3 { font-size: 24px; }
+.table-history { margin: 18px 0; text-align: left; }
+.table-history summary { min-height: 44px; padding: 10px 0; font-weight: 700; cursor: pointer; }
+.table-history ol { padding-left: 22px; color: var(--muted); font-size: 13px; }
+.table-history li { margin: 10px 0; overflow-wrap: anywhere; }
+.pitch-clock { text-align: center; display: grid; margin: 12px 0; color: var(--sea); }
+.pitch-clock strong { font-size: 64px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.pitch-clock span { font-size: 13px; color: var(--muted); }
+.pitch-votes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+.pitch-votes .selected { background: var(--sea); color: var(--bg); border-color: var(--sea); }
+.pitch-results { padding: 0; list-style: none; display: grid; gap: 10px; }
+.pitch-results li { min-width: 0; padding: 16px; border-radius: 18px; background: var(--card2); }
+.pitch-results p { margin: 6px 0; color: var(--muted); overflow-wrap: anywhere; }
+.pitch-score { display: flex; justify-content: space-between; gap: 12px; }
+.pitch-score span { font-weight: 700; color: var(--sea); }
+.sheet [data-act^="pitch-"].link { display: block; width: 100%; min-height: 44px; text-align: center; }
+.sheet [data-act="table-menu"] { margin-top: 20px; }
+@media (min-width: 520px) { .table-duel { grid-template-columns: 1fr 1fr; } }
 
 /* Postcard */
 .postcard {
