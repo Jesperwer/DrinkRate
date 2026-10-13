@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One command for the whole test run: fresh local database, SQL files, synthetic
-# test data, unit tests and the mobile end-to-end test against tests/mock-server.js.
+# test data, unit tests and the mobile end-to-end tests (tests/e2e.js, tests/lagkamp.e2e.js)
+# against tests/mock-server.js.
 #   npm test
 # Uses the normal PG* environment variables (PGHOST, PGUSER, PGPASSWORD, PGPORT)
 # and refuses anything but a local Postgres: the tests must never touch production.
@@ -46,3 +47,4 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 PORT=$PORT TEST_PHOTO="$OUT/test-photo.jpg" node tests/e2e.js "$OUT/screens"
+PORT=$PORT node tests/lagkamp.e2e.js "$OUT/screens"

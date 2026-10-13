@@ -28,6 +28,19 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
   poengtelling. Timeren pauses når appen skjules. Spill kan avsluttes eller startes på nytt uten å endre
   karakterer. Ønsker lagres på den innloggede personens telefon, som den eksisterende ønskelisten.
   Spill og filtrering ligger i `site/games.js`. Ingen ny SQL er nødvendig.
+- **Lagkamp** (Familien → Familiespill → Lagkamp, `features.teamGame`): 2–4 lag spiller på én mobil, også verten.
+  Appen trekker 5, 10 eller 15 spørsmål i runder på 1–3 per drink: gjett drinken fra bildet, hvem skrev kommentaren,
+  hvem ga karakteren, hvem lastet opp bildet og hvilken drink har høyest familiesnitt (menyhint som reserve bare hvis
+  man slår det på). Spørsmål, svaralternativer, fasit og bilder fryses når kampen starter. Hvert lag får telefonen
+  etter tur («Gi telefonen til …» → «Vi er klare»), låser svaret eller passer, og fasiten vises først når alle har svart.
+  Riktig svar gir ett poeng; «Rett poeng» erstatter poengene for et spørsmål (med grunn, kan angres). Rundevinner og
+  sluttvinner beregnes av poengloggen, med delt seier ved likt. Kampen lagres etter hvert trekk i IndexedDB på
+  telefonen, for den innloggede personen (ett pågående spill og siste resultat), og kan fortsettes etter omlasting.
+  Den lagres ikke på serveren og synkroniseres ikke mellom telefoner; tømmes nettleserdataene, er den borte. Feiler
+  lagringen, sier appen det. Motoren er `site/lagkamp.js` (ren, enhetstestet), lagringen `site/lagkamp-store.js`.
+  Spillet leser bare (`dr_get_ratings`, `dr_recent_photos`, inntil 30 nyeste bilder) og skriver aldri karakterer eller bilder.
+  Ingen ny SQL er nødvendig. Fasiten ligger i telefonens minne; spillet hindrer at den vises ved vanlig bruk, ikke mot
+  noen som åpner utviklerverktøy.
 - Lagring: dobbelttrykk sender bare én lagring, en feilet lagring beholder kommentaren (også etter omlasting),
   og feiler bare bildet vises «Karakter lagret – bilde gjenstår» med «Prøv bildet igjen».
 - Karakter 1–10 per drink. Drinkene er felles for alle barene. Hvor man smakte den er valgfritt.
@@ -54,4 +67,4 @@ PGHOST=localhost PGUSER=postgres npm test
 
 `tests/run.sh` lager en ny database `drinkrate_test`, kjører SQL-filene, syntetiske testdata
 (`tests/seed.sql`) og databasesjekker (`tests/sql-checks.sql`), enhetstestene i `tests/unit/` og
-mobiltesten `tests/e2e.js` (Chromium med iPhone-oppsett – ikke en ekte Safari-test). Skjermbilder havner i `tests/.out/`.
+mobiltestene `tests/e2e.js` og `tests/lagkamp.e2e.js` (Chromium med iPhone-oppsett – ikke en ekte Safari-test). Skjermbilder havner i `tests/.out/`.

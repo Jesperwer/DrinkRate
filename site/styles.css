@@ -806,3 +806,101 @@ button.sticker { width: 100%; }
 .pc-line b { flex: none; font-family: var(--serif); }
 .pc-empty { margin: 4px 0 0; color: #55606a; font-style: italic; }
 .pc-foot { margin: 16px 0 0; font-size: 12px; color: #55606a; text-align: center; }
+
+/* ── Lagkamp ───────────────────────────────────── */
+/* Right after a game screen changes, taps fall through nothing: no double-tap into the next step. */
+.sheet.guard button, .sheet.guard select, .sheet.guard input { pointer-events: none; }
+.sheet button, .sheet select { touch-action: manipulation; }
+.lk { min-width: 0; overflow-wrap: anywhere; }
+.lk h3 { margin: 0; }
+.lk-focus:focus { outline: none; }
+.lk-head .head-btns { display: flex; gap: 8px; }
+.lk-close, .lk-tool { width: 44px; height: 44px; font-size: 18px; }
+.lk-label { margin: 16px 0 8px; font-weight: 700; padding: 0; }
+.lk-count .chip { min-height: 44px; min-width: 64px; justify-content: center; }
+.lk-status { color: var(--sea); font-weight: 700; margin: 14px 0; }
+.lk-card { margin: 14px 0 0; padding: 14px; border-radius: 20px; background: var(--card2); min-width: 0; }
+.lk-card h3 { font-size: 19px; }
+.lk-last p { margin: 8px 0 0; }
+.lk-notice { margin: 12px 0; padding: 12px 14px; border-radius: 16px; background: var(--coral-soft); color: var(--ink); }
+.lk-notice p { margin: 0; }
+.lk-notice .link { min-height: 44px; margin: 4px 0 0; width: 100%; }
+.lk-team { display: inline-flex; align-items: baseline; gap: 5px; font-weight: 700; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.lk-mark { font-style: normal; color: var(--team); }
+.lk-t0 { --team: var(--coral); }
+.lk-t1 { --team: var(--sea); }
+.lk-t2 { --team: #b7791f; }
+.lk-t3 { --team: #8a5cb8; }
+@media (prefers-color-scheme: dark) { .lk-t2 { --team: #f2b134; } .lk-t3 { --team: #b99be0; } }
+.lk-board, .lk-strip, .lk-answers, .lk-people, .lk-opts-list, .lk-hist, .lk-h-ans, .lk-errors, .lk-types { list-style: none; padding: 0; margin: 10px 0 0; }
+.lk-board li, .lk-answers li { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-width: 0; padding: 6px 0; }
+.lk-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.lk-strip li { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-radius: 12px; background: var(--card2); font-size: 14px; min-width: 0; max-width: 100%; }
+.lk-strip b { font-variant-numeric: tabular-nums; }
+.lk-people li { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 10em) auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+/* Narrow phones: the team picker gets its own line under the name. */
+@media (max-width: 400px) {
+  .lk-people li { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .lk-people .lk-select { grid-column: 2 / -1; grid-row: 2; }
+}
+.lk-pname { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.lk-pname em { font-weight: 400; color: var(--muted); font-style: normal; }
+.lk-select { min-height: 44px; padding: 8px 10px; font-size: 15px; width: 100%; min-width: 0; }
+.lk-guest { background: var(--muted); }
+.lk-rm { width: 44px; height: 44px; }
+.lk-names .field span { display: flex; gap: 6px; align-items: baseline; }
+.lk-errors { padding: 12px 14px; border-radius: 16px; background: var(--coral-soft); color: var(--ink); }
+.lk-errors li { margin: 4px 0; }
+.lk-checks { border: 0; padding: 0; min-width: 0; }
+.lk-plan { margin: 0; color: var(--sea); }
+.lk-types li { font-size: 14px; color: var(--ink2); margin: 2px 0; }
+.lk-q { margin-top: 6px; }
+.lk-type { margin: 6px 0 2px; font-size: 13px; font-weight: 700; color: var(--sea); }
+.lk-prompt { font-family: var(--serif); font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+.lk-photo { display: block; width: 100%; margin: 12px 0 0; border-radius: 18px; overflow: hidden; background: var(--card2); }
+.lk-photo img { display: block; width: 100%; max-height: 46vh; object-fit: contain; background: #000; }
+.lk-photo-wait { padding: 40px 14px; text-align: center; color: var(--muted); }
+.lk-photo-err { padding: 14px; }
+.lk-photo-err p { margin: 0; }
+.lk-opts-list li { padding: 12px 14px; margin-top: 8px; border-radius: 16px; border: 1.5px solid var(--line); font-weight: 700; }
+.lk-opts-list li.lk-right { background: #22b35e; border-color: #22b35e; color: #fff; }
+.lk-opts .quiz-opt, .lk-toggles .quiz-opt { min-height: 54px; }
+.quiz-opt.lk-picked { background: var(--sea); border-color: var(--sea); color: #fff; }
+.quiz-opt.lk-picked .lk-mark { color: #fff; }
+.lk-toggles { display: grid; gap: 8px; }
+.lk-row { display: flex; gap: 8px; }
+.lk-row .btn { margin-top: 8px; min-height: 44px; }
+.lk-order { margin: 10px 0 0; font-size: 14px; }
+.lk-turn { margin: 10px 0 0; font-size: 18px; }
+.lk-handoff { margin: 18px 0 8px; padding: 22px 14px; border-radius: 22px; background: var(--card2); text-align: center; }
+.lk-give { margin: 0; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 13px; }
+.lk-big { margin: 6px 0 0; font-family: var(--serif); font-size: 30px; line-height: 1.15; }
+.lk-locked { margin: 0 0 12px; color: #1d8f4c; font-weight: 700; }
+@media (prefers-color-scheme: dark) { .lk-locked { color: #5fd38f; } }
+/* Undo and pass sit well below the main button, never where the next step's button appears. */
+.lk-undo, .lk-pass { margin-top: 40px; }
+.lk-undo .link { min-height: 44px; width: 100%; }
+.lk-center { text-align: center; margin-top: 12px; }
+.lk-center h3 { font-size: 22px; margin-top: 4px; }
+.lk-reveal { margin: 14px 0 0; padding: 12px 14px; border-radius: 16px; background: var(--sea-soft); }
+.lk-reveal p { margin: 4px 0; }
+.lk-answers li { border-bottom: 1px solid var(--line); }
+.lk-answers li > span:nth-child(2) { flex: 1; min-width: 0; text-align: right; color: var(--ink2); }
+.lk-answers li.lk-pt b { color: #1d8f4c; }
+.lk-corrected { color: var(--coral); font-weight: 600; font-size: 14px; }
+.lk-table { width: 100%; border-collapse: collapse; margin-top: 14px; table-layout: fixed; }
+.lk-table th, .lk-table td { padding: 10px 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.lk-table td { text-align: right; width: 5.5em; font-variant-numeric: tabular-nums; }
+.lk-table th small { display: block; font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.lk-hist > li { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.lk-hist p { margin: 4px 0; }
+.lk-h-top { font-size: 12.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.lk-h-quote { font-style: italic; }
+.lk-h-ans li { margin: 2px 0; font-size: 14px; }
+.lk-hist .link { min-height: 44px; margin: 4px 0 0; }
+.lk-saved { margin: 14px 0 0; font-size: 12.5px; color: var(--muted); text-align: center; }
+.lk-unsaved { margin: 14px 0 0; padding: 10px 12px; border-radius: 14px; background: var(--coral-soft); font-size: 14px; }
+.lk-tools { display: flex; gap: 8px; margin-top: 28px; }
+.lk-tools .btn { margin-top: 0; min-height: 48px; }
+.lk-zoom img { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 16px; background: #000; margin-top: 12px; }
+.lk-zoom p { margin: 10px 0 0; font-weight: 700; text-align: center; }
