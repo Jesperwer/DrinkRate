@@ -20,6 +20,14 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
   klistremerke (bare 13.10.2026 etter kypriotisk dato), «Mest omdiskutert» og Familiespill under Familien,
   smakstvillinger og feriepostkort under Meg, «Vurder først» i vurderingsdialogen, hint på låste klistremerker.
   Beregningene ligger i `site/insights.js` og `site/quiz.js` (rene funksjoner, enhetstestet).
+- «Ikke testet» er et eget filter i drinklisten: drinker uten den innloggede personens karakter.
+  Det kan kombineres med søk, kategori, bar og all inclusive. Filteret nullstilles ved utlogging.
+- Under Familien → Familiespill ligger også Menyduellen og Selg meg drinken (`features.tableGames`).
+  Én mobil brukes av hele bordet. Menyduellen trekker 8, 4 eller 2 drinker og lar flertallet velge vinneren.
+  Selg meg drinken har valg av deltakere, én salgstale per person, 20 sekunders timer med pause og lokal
+  poengtelling. Timeren pauses når appen skjules. Spill kan avsluttes eller startes på nytt uten å endre
+  karakterer. Ønsker lagres på den innloggede personens telefon, som den eksisterende ønskelisten.
+  Spill og filtrering ligger i `site/games.js`. Ingen ny SQL er nødvendig.
 - Lagring: dobbelttrykk sender bare én lagring, en feilet lagring beholder kommentaren (også etter omlasting),
   og feiler bare bildet vises «Karakter lagret – bilde gjenstår» med «Prøv bildet igjen».
 - Karakter 1–10 per drink. Drinkene er felles for alle barene. Hvor man smakte den er valgfritt.
