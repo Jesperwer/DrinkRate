@@ -904,3 +904,9 @@ button.sticker { width: 100%; }
 .lk-tools .btn { margin-top: 0; min-height: 48px; }
 .lk-zoom img { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 16px; background: #000; margin-top: 12px; }
 .lk-zoom p { margin: 10px 0 0; font-weight: 700; text-align: center; }
+
+/* Family variants */
+.tag.variant { background: var(--sea-soft); color: var(--sea); }
+.variant-line { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); }
+.link.inline { display: inline; margin: 0; font-size: inherit; }
+.variant-btn { margin-top: 12px; min-height: 44px; }

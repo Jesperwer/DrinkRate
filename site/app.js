@@ -14,6 +14,7 @@
   const on = (f) => !!(CFG.features && CFG.features[f]);
   const BDAY = CFG.birthday || null;
   const known = (id) => !!DRINK[id];
+  const MENU_IDS = new Set(DRINKS.map((d) => d.id)); // the real menu; family variants are added on top
   const CAT = {
     cocktail: { name: "Cocktails", e: "🍹" },
     free: { name: "Alkoholfritt", e: "🥤" },
@@ -324,6 +325,8 @@
     quiz: null, // the running quiz round
     tableSetup: null,
     tableGame: null,
+    customReady: null, // family variants: true = loaded, false = not set up in the database
+    variant: null, // the open "make a variant" form
   };
   // True while `token` is still the logged-in session, so answers that arrive
   // after logging out or switching person are dropped.
@@ -389,10 +392,11 @@
     if (!state.session) return;
     const token = state.session.token;
     try {
-      const [data] = await Promise.all([rpc("dr_get_ratings", { p_token: token }), loadStickers()]);
+      const [data, custom] = await Promise.all([rpc("dr_get_ratings", { p_token: token }), loadCustom(token), loadStickers()]);
       if (!current(token)) return;
       if (data.error === "BAD_TOKEN") { logout(); return; }
       if (!Array.isArray(data.ratings)) throw new Error(data.error || "BAD_ANSWER");
+      if (custom) applyCustom(custom);
       state.ratings = data.ratings.filter((r) => DRINK[r.drink]);
       if (data.me && data.me !== state.session.name) saveSession({ ...state.session, name: data.me });
       const wasLoaded = state.loaded && !state.loadError;
@@ -411,6 +415,9 @@
 
   function logout() {
     clearTableGame();
+    applyCustom([]);
+    state.customReady = null;
+    state.variant = null;
     lkReset();
     saveSession(null);
     state.ratings = [];
@@ -429,6 +436,122 @@
     Object.assign(state, { tab: "list", bar: "all", cat: "all", aiOnly: false, untestedOnly: false, q: "", topCat: "all",
       loaded: false, loadError: false, stale: false, lastSync: null, quiz: null, pick: null });
     renderLogin();
+  }
+
+  // ── Family variants ("Mojito uten sukker") ─────────────────
+  // Stored in the database (supabase/custom_drinks.sql) and shown to everyone like a menu
+  // drink. Each has its own id (c-…), so ratings, photos and games work unchanged.
+  // Category, bars and price come from the drink it is based on.
+  async function loadCustom(token) {
+    if (!on("customDrinks")) return null;
+    try {
+      const rows = await rpc("dr_list_custom_drinks", { p_token: token });
+      if (!Array.isArray(rows)) return null;
+      state.customReady = true;
+      return rows;
+    } catch (e) {
+      // 404: the SQL has not been run yet. Then the button is simply not shown.
+      if (e.cause && /HTTP 404/.test(e.cause.message)) state.customReady = false;
+      return null;
+    }
+  }
+  function applyCustom(rows) {
+    for (let i = DRINKS.length - 1; i >= 0; i--) if (DRINKS[i].custom) { delete DRINK[DRINKS[i].id]; DRINKS.splice(i, 1); }
+    const byId = Object.fromEntries(rows.map((c) => [c.id, c]));
+    const baseOf = (c, depth = 0) => MENU_IDS.has(c.base) ? DRINK[c.base] : byId[c.base] && depth < 5 ? baseOf(byId[c.base], depth + 1) : null;
+    for (const c of rows) {
+      if (!c || !/^c-[a-z0-9]{10}$/.test(c.id) || DRINK[c.id]) continue;
+      const base = baseOf(c);
+      const d = { id: c.id, cat: base ? base.cat : "cocktail", name: c.name, desc: c.ingredients, bars: base ? base.bars : BARS.map((b) => b.id),
+        ai: base ? base.ai : [], price: base ? base.price : "", custom: { base: c.base, by: c.by, at: c.at } };
+      DRINKS.push(d);
+      DRINK[d.id] = d;
+    }
+    cache = { ratings: null };
+  }
+  function openVariant(baseId) {
+    const base = DRINK[baseId];
+    if (!base || !state.customReady) return;
+    state.variant = { base: baseId, name: `${base.name} – min variant`, ingredients: base.desc || "", error: "", busy: false };
+    state.draft = null;
+    openSheet("variant");
+    root.querySelector('.sheet input[name="vname"]')?.select();
+  }
+  const VARIANT_ERR = {
+    NAME_TAKEN: "Det finnes allerede en variant med det navnet. Velg et annet.",
+    BAD_NAME: "Navnet må ha 2–60 tegn.",
+    BAD_INGREDIENTS: "Skriv ingrediensene (2–300 tegn).",
+    TOO_MANY: "Du har laget 50 varianter, som er grensen.",
+    BAD_DRINK: "Fant ikke drinken varianten skal bygge på.",
+  };
+  async function saveVariant() {
+    const v = state.variant;
+    if (!v || v.busy) return;
+    const name = v.name.trim().replace(/\s+/g, " "), ingredients = v.ingredients.trim();
+    v.error = name.length < 2 || name.length > 60 ? VARIANT_ERR.BAD_NAME : ingredients.length < 2 || ingredients.length > 300 ? VARIANT_ERR.BAD_INGREDIENTS
+      : DRINKS.some((d) => norm(d.name).trim() === norm(name)) ? "Det finnes allerede en drink med det navnet. Velg et annet." : "";
+    if (v.error) { render(); return; }
+    const token = state.session.token;
+    v.busy = true;
+    render();
+    let res;
+    try { res = await rpc("dr_add_custom_drink", { p_token: token, p_base: v.base, p_name: name, p_ingredients: ingredients }); }
+    catch (e) {
+      // A timeout may still have reached the database: look before calling it failed.
+      const rows = current(token) ? await loadCustom(token) : null;
+      const mine = rows && rows.find((c) => norm(c.name) === norm(name) && isMe(c.by));
+      res = mine ? { ok: true, id: mine.id } : { error: e.cause && /HTTP 404/.test(e.cause.message) ? "NOT_SET_UP" : "NETWORK" };
+    }
+    if (!current(token) || state.variant !== v) return;
+    v.busy = false;
+    if (res.error === "BAD_TOKEN") { logout(); return; }
+    if (!res.ok) {
+      v.error = res.error === "NETWORK" ? "Ikke lagret – får ikke kontakt. Prøv igjen."
+        : res.error === "NOT_SET_UP" ? "Varianter er ikke slått på i databasen ennå." : VARIANT_ERR[res.error] || "Ikke lagret. Prøv igjen.";
+      render();
+      return;
+    }
+    const rows = await loadCustom(token);
+    if (!current(token)) return;
+    if (rows) applyCustom(rows);
+    state.variant = null;
+    toast(`✏️ ${name} er laget – gi den en karakter`);
+    if (DRINK[res.id]) openDrink(res.id); else closeSheet();
+  }
+  async function removeVariant(id) {
+    const d = DRINK[id];
+    if (!d || !d.custom || state.saving) return;
+    const token = state.session.token;
+    state.saving = true;
+    render();
+    let res;
+    try { res = await rpc("dr_remove_custom_drink", { p_token: token, p_id: id }); } catch { res = { error: "NETWORK" }; }
+    if (!current(token)) return;
+    state.saving = false;
+    if (!res.ok) {
+      if (state.draft) state.draft.error = res.error === "RATED_BY_OTHERS" ? "Noen andre har gitt den karakter, så den kan ikke slettes."
+        : res.error === "NETWORK" ? "Ikke slettet – får ikke kontakt. Prøv igjen." : "Ikke slettet.";
+      render();
+      return;
+    }
+    const rows = await loadCustom(token);
+    if (!current(token)) return;
+    applyCustom(rows || []);
+    state.ratings = state.ratings.filter((r) => r.drink !== id);
+    closeSheet();
+    toast("Varianten er slettet");
+    refresh();
+  }
+  function variantHtml() {
+    const v = state.variant, base = DRINK[v.base];
+    return sheetWrap(`<div class="sheet-head"><div class="sheet-title"><span class="emoji big cat-${base.cat}">✏️</span>
+        <div><h2>Egen variant</h2><div class="where">Basert på ${esc(base.name)}</div></div></div>${closeBtn}</div>
+      <label class="field"><span>Navn</span><input class="input" name="vname" maxlength="60" value="${esc(v.name)}" autocomplete="off"></label>
+      <label class="field"><span>Ingredienser</span><textarea class="input" name="vingr" maxlength="300" rows="4">${esc(v.ingredients)}</textarea></label>
+      <p class="hint">Endre det du vil. Kategori og barer arves fra ${esc(base.name)}. Hele familien ser varianten og kan gi den karakter.</p>
+      ${v.error ? `<p class="error" role="alert">${esc(v.error)}</p>` : ""}
+      <button class="btn coral" data-act="variant-save" ${v.busy ? "disabled" : ""}>${v.busy ? "Lagrer …" : "Lagre og gi karakter"}</button>
+      <button class="btn ghost wide" data-act="close">Avbryt</button>`, "Egen variant");
   }
 
   // ── Derived data ───────────────────────────────────────────
@@ -628,7 +751,7 @@
       <span class="drink-main">
         <span class="drink-name">${esc(d.name)}</span>
         ${d.desc ? `<span class="drink-desc">${esc(d.desc)}</span>` : ""}
-        <span class="drink-meta">${priceTag(d)}${list ? raters(list) : `<span class="where-small">${esc(barNames(d.bars))}</span>`}${list && list.some((r) => r.photo) ? `<span class="tag photo">📷 ${list.filter((r) => r.photo).length}</span>` : ""}</span>
+        <span class="drink-meta">${d.custom ? `<span class="tag variant">✏️ Variant</span>` : ""}${priceTag(d)}${list ? raters(list) : `<span class="where-small">${esc(barNames(d.bars))}</span>`}${list && list.some((r) => r.photo) ? `<span class="tag photo">📷 ${list.filter((r) => r.photo).length}</span>` : ""}</span>
       </span>
       <span class="score">${ring(s)}<small>${s ? `${s.n} ${s.n === 1 ? "stemme" : "stemmer"}` : "ingen ennå"}</small></span>
     </button>`;
@@ -1017,6 +1140,7 @@
     render();
   }
   function closeSheet() {
+    state.variant = null;
     if (state.sheet === "quiz") state.quiz = null;
     if (state.sheet === "lagkamp") lkClose();
     clearTableGame();
@@ -1043,6 +1167,7 @@
     if (state.sheet === "quiz") return quizHtml();
     if (state.sheet === "tablegame") return tableGameHtml();
     if (state.sheet === "lagkamp") return lkHtml();
+    if (state.sheet === "variant") return state.variant ? variantHtml() : "";
     if (state.sheet === "postcard") return postcardHtml();
     if (state.sheet.startsWith("twin:")) return twinHtml(state.sheet.slice(5));
     if (state.sheet.startsWith("person:")) {
@@ -1077,6 +1202,8 @@
       ${d.desc ? `<p class="desc">${esc(d.desc)}</p>` : ""}
       ${d.flav ? `<p class="flav">Smaker: ${esc(d.flav)}</p>` : ""}
       <p class="ai-line">${aiText}</p>
+      ${d.custom ? `<p class="variant-line">✏️ Variant av ${DRINK[d.custom.base] ? `<button class="link inline" data-drink="${esc(d.custom.base)}">${esc(DRINK[d.custom.base].name)}</button>` : "en drink som ikke finnes lenger"} · laget av ${esc(d.custom.by)}</p>` : ""}
+      ${on("customDrinks") && state.customReady ? `<button class="chip toggle variant-btn" data-act="variant">✏️ Lag egen variant</button>` : ""}
 
       <div class="rate-box">
         ${state.draft.restored ? `<p class="draft-note">↩️ Ulagret kladd hentet tilbake</p>` : ""}
@@ -1103,6 +1230,10 @@
         </div>`}
       </div>
       ${state.draft.revealed && mine ? revealHtml(list, mine) : ""}
+      ${d.custom && isMe(d.custom.by) && !list.some((r) => !isMe(r.name)) ? (state.draft.confirmDelete
+        ? `<div class="save-status"><b>Slette varianten ${esc(d.name)}?</b> Din karakter av den slettes også.<div class="row">
+            <button class="btn ghost" data-act="variant-keep">Avbryt</button><button class="btn coral" data-act="variant-delete" ${state.saving ? "disabled" : ""}>Ja, slett</button></div></div>`
+        : `<button class="link" data-act="variant-ask-delete">Slett varianten</button>`) : ""}
 
       ${state.draft.blind && !state.draft.revealed ? `<div class="family blind-note"><span>🙈</span>Familiens karakterer vises når du har lagret din.</div>` : `<div class="family">
         <div class="family-head"><h3>Familien</h3>${s ? `<span class="fam-avg">${ring(s, "sm")}<small>${s.n} av ${people().length}</small></span>` : ""}</div>
@@ -2539,6 +2670,11 @@
       case "quizmenu": state.quiz = null; render(); break;
       case "qnext": quizNext(); break;
       case "postcard": openSheet("postcard"); break;
+      case "variant": openVariant(state.sheet); break;
+      case "variant-save": saveVariant(); break;
+      case "variant-ask-delete": state.draft.confirmDelete = true; render(); break;
+      case "variant-keep": state.draft.confirmDelete = false; render(); break;
+      case "variant-delete": removeVariant(state.sheet); break;
       case "logo": {
         const now = Date.now();
         logoTaps = [...logoTaps.filter((x) => now - x < 1500), now];
@@ -2613,6 +2749,7 @@
       return;
     }
     if (el.name === "pin" || el.name === "pin2") { el.value = el.value.replace(/\D/g, "").slice(0, 4); return; }
+    if ((el.name === "vname" || el.name === "vingr") && state.variant) { state.variant[el.name === "vname" ? "name" : "ingredients"] = el.value; return; }
     if (el.name === "q") { state.q = el.value; updateResults(); }
     else if (el.name === "comment" && state.draft) state.draft.comment = el.value;
     else return;

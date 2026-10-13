@@ -7,6 +7,7 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
   kopierer `site/` dit ved push til `main` bare når begge er grønne.
 - **Database:** Supabase. Kjør i Supabase → SQL Editor, i denne rekkefølgen: `supabase/setup.sql`,
   `supabase/photos.sql`, `supabase/stickers.sql`, `supabase/security_holiday.sql` (stenger nye brukere).
+  Egne drinkvarianter krever i tillegg `supabase/custom_drinks.sql` (bare additiv; uten den skjules knappen).
   Kjøres `setup.sql` på nytt, åpnes registreringen igjen og den overskriver bildeversjonen av
   `dr_get_ratings` – kjør da de tre andre filene etterpå.
   Legg prosjektets URL og publishable/anon-nøkkel i `site/config.js`.
@@ -41,6 +42,10 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
   Spillet leser bare (`dr_get_ratings`, `dr_recent_photos`, inntil 30 nyeste bilder) og skriver aldri karakterer eller bilder.
   Ingen ny SQL er nødvendig. Fasiten ligger i telefonens minne; spillet hindrer at den vises ved vanlig bruk, ikke mot
   noen som åpner utviklerverktøy.
+- **Egen variant** (`features.customDrinks`): i en drink trykker man «✏️ Lag egen variant», endrer navn og ingredienser
+  og lagrer. Varianten blir en ny drink med egen id (`c-…`) som hele familien ser og kan gi karakter, bilde og kommentar
+  som vanlig. Kategori, barer og pris arves fra drinken den bygger på. Den som laget varianten kan slette den så lenge
+  ingen andre har gitt den karakter. Maks 50 per person, unike navn. Lagret i `dr_custom_drinks` (`supabase/custom_drinks.sql`).
 - Lagring: dobbelttrykk sender bare én lagring, en feilet lagring beholder kommentaren (også etter omlasting),
   og feiler bare bildet vises «Karakter lagret – bilde gjenstår» med «Prøv bildet igjen».
 - Karakter 1–10 per drink. Drinkene er felles for alle barene. Hvor man smakte den er valgfritt.
@@ -67,4 +72,4 @@ PGHOST=localhost PGUSER=postgres npm test
 
 `tests/run.sh` lager en ny database `drinkrate_test`, kjører SQL-filene, syntetiske testdata
 (`tests/seed.sql`) og databasesjekker (`tests/sql-checks.sql`), enhetstestene i `tests/unit/` og
-mobiltestene `tests/e2e.js` og `tests/lagkamp.e2e.js` (Chromium med iPhone-oppsett – ikke en ekte Safari-test). Skjermbilder havner i `tests/.out/`.
+mobiltestene `tests/e2e.js`, `tests/lagkamp.e2e.js` og `tests/custom-drinks.e2e.js` (Chromium med iPhone-oppsett – ikke en ekte Safari-test). Skjermbilder havner i `tests/.out/`.
