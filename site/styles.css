@@ -754,7 +754,7 @@ button.sticker { width: 100%; }
 .table-checks input { width: 20px; height: 20px; accent-color: var(--sea); }
 .table-players { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
 .table-players legend { padding: 0 0 10px; font-weight: 700; }
-.table-players .chip { min-height: 44px; }
+.table-players .chip { min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .table-pool { color: var(--sea); font-weight: 700; margin: 14px 0; }
 .table-duel { display: grid; gap: 12px; margin-top: 12px; }
 .table-candidate { min-width: 0; padding: 14px; border: 2px solid var(--line); background: var(--card2); border-radius: 22px; }
