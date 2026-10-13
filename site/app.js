@@ -1606,6 +1606,7 @@
   }
   function tableAction(act) {
     const g = state.tableGame;
+    guardSheet(); // the next screen's button often sits where this one was
     if (act === "table-menu") { tableMenu(); return; }
     if (act === "table-start") { startTableGame(); return; }
     if (act === "table-again") { stopTableClock(); state.tableGame = null; tableRender(); return; }
