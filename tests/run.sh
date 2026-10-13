@@ -45,4 +45,4 @@ for _ in $(seq 1 50); do
   curl -sf "http://localhost:$PORT/" >/dev/null && break
   sleep 0.2
 done
-TEST_PHOTO="$OUT/test-photo.jpg" node tests/e2e.js "$OUT/screens"
+PORT=$PORT TEST_PHOTO="$OUT/test-photo.jpg" node tests/e2e.js "$OUT/screens"

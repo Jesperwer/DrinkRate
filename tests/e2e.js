@@ -2,9 +2,10 @@
 const { chromium, devices } = require("playwright");
 const assert = require("assert");
 const OUT = process.argv[2] || ".";
-const BASE = "http://localhost:8787/";
+const PORT = Number(process.env.PORT || 8787);
+const BASE = `http://localhost:${PORT}/`;
 const PHOTO = process.env.TEST_PHOTO || "/var/tmp/test-photo.jpg";
-const CONFIG = `window.DR_CONFIG={url:"http://localhost:8787",key:"sb_publishable_test",family:["Luise","Jesper","Jakob","Astri","Ingvild","Anne","Julie"],
+const CONFIG = `window.DR_CONFIG={url:"http://localhost:${PORT}",key:"sb_publishable_test",family:["Luise","Jesper","Jakob","Astri","Ingvild","Anne","Julie"],
   features:{birthday:true,controversy:true,twins:true,quiz:true,tableGames:true,blindRating:true,postcard:true},
   birthday:{id:"anne2026",name:"Anne",date:"2026-10-13",tz:"Asia/Nicosia"}};`;
 
