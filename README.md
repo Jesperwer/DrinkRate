@@ -21,6 +21,10 @@ Familiens nettside for å gi stjerner til de all-inclusive drinkene på ferien.
   klistremerke (bare 13.10.2026 etter kypriotisk dato), «Mest omdiskutert» og Familiespill under Familien,
   smakstvillinger og feriepostkort under Meg, «Vurder først» i vurderingsdialogen, hint på låste klistremerker.
   Beregningene ligger i `site/insights.js` og `site/quiz.js` (rene funksjoner, enhetstestet).
+- Klistremerker for nivåer: 🥉 Bronse (10 ulike drinker), 🥈 Sølv (20), 🥇 Gull (35) og 💎 Platina 50 (50),
+  med fremdriftslinje under Meg. I tillegg Barhopper (alle fire barene), Allsidig (alle kategorier),
+  Kritiker (10 kommentarer), Fotograf (bilde), Pioner (først i familien på 5 drinker) og Oppfinner (egen variant).
+  Alle regnes ut fra karakterene (`earnedFromRatings` i `site/app.js`), så de krever ingen ny SQL.
 - «Ikke testet» er et eget filter i drinklisten: drinker uten den innloggede personens karakter.
   Det kan kombineres med søk, kategori, bar og all inclusive. Filteret nullstilles ved utlogging.
 - Under Familien → Familiespill ligger også Menyduellen og Selg meg drinken (`features.tableGames`).

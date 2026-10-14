@@ -154,7 +154,22 @@
     { id: "match", e: "💘", name: "Match", hint: "Sveip til høyre på noe familien elsker." },
     { id: "cheers", e: "🥂", name: "Skål", hint: "Si skål – i søkefeltet." },
     { id: "disco", e: "🪩", name: "Disco", hint: "Tittelen øverst tåler mer enn ett trykk …" },
+    // Earned from the ratings themselves, see earnedFromRatings.
+    { id: "barhop", e: "🏝️", name: "Barhopper", hint: "Gi karakter på alle fire barene." },
+    { id: "allcats", e: "🌈", name: "Allsidig", hint: "Smak noe fra hver kategori: cocktail, alkoholfritt, øl, vin, sprit og kaffe." },
+    { id: "critic", e: "✍️", name: "Kritiker", hint: "Skriv en kommentar på 10 drinker." },
+    { id: "photo", e: "📸", name: "Fotograf", hint: "Legg ved et bilde når du gir karakter." },
+    { id: "pioneer", e: "🚀", name: "Pioner", hint: "Vær den første i familien som smaker 5 drinker." },
+    { id: "inventor", e: "✏️", name: "Oppfinner", hint: "Lag din egen variant av en drink." },
   ];
+  // Levels for how many different drinks you have rated this holiday.
+  const LEVELS = [
+    { id: "tasted10", n: 10, e: "🥉", name: "Bronse" },
+    { id: "tasted20", n: 20, e: "🥈", name: "Sølv" },
+    { id: "tasted35", n: 35, e: "🥇", name: "Gull" },
+    { id: "tasted50", n: 50, e: "💎", name: "Platina 50" },
+  ];
+  for (const l of LEVELS) STICKERS.push({ ...l, level: true, hint: `Gi karakter til ${l.n} ulike drinker i løpet av ferien.` });
   // Anne's birthday sticker stays in the book after the day, so earned ones keep showing.
   if (BDAY && BDAY.id) {
     const [y, m, d] = BDAY.date.split("-").map(Number);
@@ -169,16 +184,22 @@
     store.set("stickers", [...have, id]);
     (serverStickers[norm(state.session.name)] ||= new Set()).add(id);
     rpc("dr_award", { p_token: state.session.token, p_sticker: id }).catch(() => { /* synced on next refresh */ });
-    if (quiet) return;
+    if (!quiet) popSticker(id);
+  }
+  // Several new stickers at once are shown one after the other.
+  let popAt = 0;
+  function popSticker(id) {
     const st = STICKERS.find((x) => x.id === id);
+    const start = Math.max(Date.now() + (document.querySelector(".fx") ? 2200 : 0), popAt);
+    popAt = start + 2900;
     setTimeout(() => {
       document.querySelector(".sticker-pop")?.remove();
       const el = document.createElement("div");
       el.className = "sticker-pop";
-      el.innerHTML = `<span class="sticker s-${st.id}"><span>${st.e}</span><b>${esc(st.name)}</b></span><small>Nytt klistremerke!</small>`;
+      el.innerHTML = `<span class="sticker s-${st.id}${st.level ? " level" : ""}"><span>${st.e}</span><b>${esc(st.name)}</b></span><small>${st.level ? `${st.n} drinker smakt!` : "Nytt klistremerke!"}</small>`;
       document.body.appendChild(el);
       setTimeout(() => el.remove(), 2800);
-    }, document.querySelector(".fx") ? 2200 : 0);
+    }, start - Date.now());
   }
 
   const discoBall = (size) => `<div class="ball ${size}"><span class="tiles"></span><span class="shine"></span><span class="glint g1">✦</span><span class="glint g2">✦</span></div>`;
@@ -372,6 +393,13 @@
     if (mine.some((r) => r.score === 1)) out.push("yuck");
     const { byDrink } = derived();
     if (mine.some((r) => (byDrink[r.drink] || []).some((o) => norm(o.name) !== norm(name) && o.score === r.score))) out.push("agree");
+    if (BARS.every((b) => mine.some((r) => r.bar === b.id))) out.push("barhop");
+    if (Object.keys(CAT).filter((c) => c !== "all").every((c) => mine.some((r) => DRINK[r.drink] && DRINK[r.drink].cat === c))) out.push("allcats");
+    if (mine.filter((r) => r.comment && r.comment.trim()).length >= 10) out.push("critic");
+    if (mine.some((r) => r.photo)) out.push("photo");
+    if (mine.filter((r) => r.at && (byDrink[r.drink] || []).every((o) => o === r || !o.at || o.at > r.at)).length >= 5) out.push("pioneer");
+    if (DRINKS.some((d) => d.custom && norm(d.custom.by) === norm(name))) out.push("inventor");
+    for (const l of LEVELS) if (mine.length >= l.n) out.push(l.id);
     return out;
   }
   function stickersOf(name) {
@@ -515,6 +543,7 @@
     if (!current(token)) return;
     if (rows) applyCustom(rows);
     state.variant = null;
+    award("inventor");
     toast(`✏️ ${name} er laget – gi den en karakter`);
     if (DRINK[res.id]) openDrink(res.id); else closeSheet();
   }
@@ -1327,6 +1356,7 @@
     const comment = remove ? null : draft.comment.trim();
     const photo = remove ? undefined : draft.photo;
     const hadPhoto = !!(myRating(derived().byDrink[id]) || {}).photo;
+    const hadStickers = new Set(stickersOf(state.session.name));
     if (!remove && !score) return;
     state.saving = true;
     draft.error = "";
@@ -1372,6 +1402,12 @@
       if (score === 10) EGGS.perfect(d.name);
       else if (score === 1) EGGS.yuck();
       else if (twins.length) EGGS.agree(twins.map((r) => r.name));
+      // Stickers from the eggs above pop by themselves; the rest pop here.
+      const fromEggs = new Set(Object.values(STICKER_FOR));
+      for (const sid of earnedFromRatings(state.session.name)) {
+        if (hadStickers.has(sid) || fromEggs.has(sid)) continue;
+        if (store.get("stickers", []).includes(sid)) popSticker(sid); else award(sid);
+      }
       refresh();
     } catch (e) {
       if (!current(token)) return;
@@ -1521,11 +1557,23 @@
     const have = stickersOf(name);
     if (!isMe(name) && !stickersShared) return "";
     return `<div class="section-title"><h2>Klistremerker</h2><small>${have.length} av ${STICKERS.length} funnet</small></div>
+      ${levelLine(name)}
       <div class="stickers">${STICKERS.map((st) => have.includes(st.id)
-        ? `<span class="sticker s-${st.id}" title="${esc(st.name)}"><span>${st.e}</span><b>${esc(st.name)}</b></span>`
+        ? `<span class="sticker s-${st.id}${st.level ? " level" : ""}" title="${esc(st.name)}"><span>${st.e}</span><b>${esc(st.name)}</b></span>`
         : isMe(name) ? `<button class="sticker locked" data-hint="${st.id}" aria-label="Hint"><span>?</span><b>???</b></button>`
         : `<span class="sticker locked"><span>?</span><b>???</b></span>`).join("")}</div>
       ${isMe(name) && have.length < STICKERS.length ? `<p class="hint sticker-tip">Trykk på et «?» for et hint.</p>` : ""}`;
+  }
+  // How far along the bronze → platinum levels someone is.
+  function levelLine(name) {
+    const n = personRatings(name).length;
+    const next = LEVELS.find((l) => n < l.n);
+    const top = [...LEVELS].reverse().find((l) => n >= l.n);
+    const from = top ? top.n : 0;
+    const pct = next ? Math.round(((n - from) / (next.n - from)) * 100) : 100;
+    return `<div class="level-line"><span>${top ? `${top.e} <b>${esc(top.name)}</b> · ` : "🍹 "}${n} ${n === 1 ? "drink" : "drinker"} smakt</span>
+      <small>${next ? `${next.n - n} til ${next.e} ${esc(next.name)}` : "Alle nivåer klare!"}</small>
+      <i style="--p:${pct}%"></i></div>`;
   }
   function showHint(id) {
     const st = STICKERS.find((x) => x.id === id);
