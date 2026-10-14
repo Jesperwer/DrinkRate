@@ -460,6 +460,8 @@ function watch(p, fn, fail = () => false, delay = 0) {
   await a.getByText("Dine karakterer").waitFor();
   await a.locator(".stickers .sticker.s-miranda").waitFor();
   assert.ok((await a.locator(".stickers .sticker:not(.locked)").count()) >= 4, "stickers collected");
+  // Level line: drinks rated so far and how many until the next level.
+  assert.match(await a.locator(".level-line").textContent(), /\d+ drinker? smakt[\s\S]*til 🥉 Bronse/);
   await a.screenshot({ path: `${OUT}/9-me.png`, fullPage: true });
   await a.click('[data-act="logout"]');
   await a.click('[data-pick="Jesper"]');

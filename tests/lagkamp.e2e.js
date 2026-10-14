@@ -398,7 +398,8 @@ async function totalsShown(p) {
   const lkCalls = ctx.calls.slice(callsBefore);
   assert.deepEqual(lkCalls.filter((c) => WRITES.includes(c)), [], `writes during Lagkamp: ${lkCalls}`);
   // dr_award only appears as the app's own sticker sync right after loading (dr_get_stickers) on reload.
-  lkCalls.forEach((c, i) => c === "dr_award" && assert.ok(lkCalls.slice(Math.max(0, i - 3), i).includes("dr_get_stickers"), `dr_award outside the sticker sync: ${lkCalls}`));
+  // Several stickers can sync in a row, so the awards themselves are skipped when looking back.
+  lkCalls.forEach((c, i) => c === "dr_award" && assert.ok(lkCalls.slice(0, i).filter((x) => x !== "dr_award").slice(-3).includes("dr_get_stickers"), `dr_award outside the sticker sync: ${lkCalls}`));
   assert.ok(lkCalls.includes("dr_get_ratings") && lkCalls.includes("dr_recent_photos"));
 
   // ── L23: the last result stays; a new game with the same teams starts at zero with new ids.
