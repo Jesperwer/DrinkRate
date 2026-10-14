@@ -910,3 +910,18 @@ button.sticker { width: 100%; }
 .variant-line { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); }
 .link.inline { display: inline; margin: 0; font-size: inherit; }
 .variant-btn { margin-top: 12px; min-height: 44px; }
+
+/* Levels: bronze, silver, gold and platinum for drinks rated */
+.sticker.s-tasted10 { background: radial-gradient(circle at 30% 25%, #f6d2a8, #c98545 70%, #9a5a26); color: #3d1f08; }
+.sticker.s-tasted20 { background: radial-gradient(circle at 30% 25%, #ffffff, #c9ced6 65%, #8e96a3); color: #262b33; }
+.sticker.s-tasted35 { background: radial-gradient(circle at 30% 25%, #fff3b0, #f2c230 65%, #b8860b); color: #4a3200; }
+.sticker.s-tasted50 {
+  background: conic-gradient(from 20deg, #e8f4ff, #c7d9f2, #f4f8ff, #b9c8e6, #e8f4ff); color: #1d2a44;
+  box-shadow: 0 0 0 3px #fff, 0 0 14px rgba(140, 180, 255, .8), 0 4px 12px rgba(0, 0, 0, .18);
+}
+.level-line { position: relative; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 8px;
+  margin: 0 2px 12px; padding-bottom: 10px; font-size: 13.5px; }
+.level-line small { color: var(--muted); font-size: 12.5px; }
+.level-line i { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; border-radius: 999px; background: var(--card2); overflow: hidden; }
+.level-line i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--p); border-radius: inherit;
+  background: linear-gradient(90deg, #c98545, #c9ced6, #f2c230, #b9c8e6); }
